@@ -3,10 +3,12 @@
 
 set -Eeuo pipefail
 
-REPO_URL="${REPO_URL:-https://github.com/Tihulu/tihulu-cosmic-system-monitor.git}"
-BRANCH="${BRANCH:-main}"
+REPO="${REPO:-Tihulu/tihulu-cosmic-system-monitor}"
+REF="${REF:-4937542780791a867fae0cc83c5a92411593560c}"
 PREFIX="${PREFIX:-/usr}"
 KEEP_BUILD_DIR="${KEEP_BUILD_DIR:-0}"
+APP_ID="io.github.tihulu.SystemMonitor"
+BIN_NAME="tihulu-cosmic-system-monitor"
 
 if [ -f "$HOME/.cargo/env" ]; then
     # shellcheck disable=SC1090
@@ -36,7 +38,8 @@ install_apt_deps() {
         libfreetype-dev \
         libwayland-dev \
         libxkbcommon-dev \
-        pkgconf
+        pkgconf \
+        tar
 }
 
 rust_is_new_enough() {
@@ -67,50 +70,45 @@ ensure_rust() {
     source "$HOME/.cargo/env"
 }
 
-ensure_just() {
-    if need_cmd just; then
-        return
-    fi
-
-    log "Installing just"
-    cargo install just
-}
-
 main() {
     install_apt_deps
     ensure_rust
-    ensure_just
 
-    BUILD_DIR="$(mktemp -d -t tihulu-cosmic-system-monitor.XXXXXX)"
+    local build_dir archive_url
+    build_dir="$(mktemp -d -t tihulu-cosmic-system-monitor.XXXXXX)"
+    archive_url="https://github.com/${REPO}/archive/${REF}.tar.gz"
 
     if [ "$KEEP_BUILD_DIR" != "1" ]; then
-        trap 'rm -rf "$BUILD_DIR"' EXIT
+        trap 'rm -rf "$build_dir"' EXIT
     else
-        log "Keeping build directory: $BUILD_DIR"
+        log "Keeping build directory: $build_dir"
     fi
 
-    log "Cloning $REPO_URL"
-    git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$BUILD_DIR"
-    cd "$BUILD_DIR"
+    log "Downloading verified source: $REF"
+    curl -fsSL "$archive_url" | tar -xz -C "$build_dir" --strip-components=1
+    cd "$build_dir"
 
-    log "Checking project"
-    cargo check
+    log "Running tests"
     cargo test --all-targets
 
-    local just_bin
-    just_bin="$(command -v just)"
-
     log "Building release binary"
-    "$just_bin" build-release
+    cargo build --release
 
     log "Installing to $PREFIX"
-    sudo env "prefix=$PREFIX" "$just_bin" install
+    sudo install -Dm0755 "target/release/$BIN_NAME" "$PREFIX/bin/$BIN_NAME"
+    sudo install -Dm0644 resources/app.desktop "$PREFIX/share/applications/$APP_ID.desktop"
+    sudo install -Dm0644 resources/app.metainfo.xml "$PREFIX/share/metainfo/$APP_ID.metainfo.xml"
+    sudo install -Dm0644 resources/icon.svg "$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID.svg"
 
-    log "Installed Tihulu System Monitor"
-    printf 'Add “Tihulu System Monitor” in Settings → Desktop → Panel, or restart COSMIC Shell/log out and in if it is not listed yet.\n'
+    if need_cmd update-desktop-database; then
+        sudo update-desktop-database "$PREFIX/share/applications" >/dev/null 2>&1 || true
+    fi
+
+    log "Tihulu System Monitor installed"
+    printf 'Add “Tihulu System Monitor” in Settings → Desktop → Panel. If an older copy is running, remove/re-add the applet or log out and back in.\n'
 
     if ! need_cmd nvidia-smi; then
-        warn "nvidia-smi was not found. NVIDIA GPU/VRAM metrics need the proprietary NVIDIA driver tools; AMD has a sysfs fallback."
+        warn "nvidia-smi was not found. NVIDIA GPU/VRAM metrics require the NVIDIA driver tools; CPU/RAM/network and DRM fallback metrics will still work."
     fi
 }
 
