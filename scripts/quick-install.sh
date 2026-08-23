@@ -9,6 +9,7 @@ PREFIX="${PREFIX:-/usr}"
 KEEP_BUILD_DIR="${KEEP_BUILD_DIR:-0}"
 APP_ID="io.github.tihulu.SystemMonitor"
 BIN_NAME="tihulu-cosmic-system-monitor"
+BUILD_DIR=""
 
 if [ -f "$HOME/.cargo/env" ]; then
     # shellcheck disable=SC1090
@@ -18,6 +19,13 @@ fi
 log() { printf '\n==> %s\n' "$*"; }
 warn() { printf '\nWARN: %s\n' "$*" >&2; }
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+cleanup() {
+    if [ "$KEEP_BUILD_DIR" != "1" ] && [ -n "$BUILD_DIR" ]; then
+        rm -rf -- "$BUILD_DIR"
+    fi
+}
+trap cleanup EXIT
 
 install_apt_deps() {
     if ! need_cmd apt-get; then
@@ -74,19 +82,17 @@ main() {
     install_apt_deps
     ensure_rust
 
-    local build_dir archive_url
-    build_dir="$(mktemp -d -t tihulu-cosmic-system-monitor.XXXXXX)"
+    local archive_url
+    BUILD_DIR="$(mktemp -d -t tihulu-cosmic-system-monitor.XXXXXX)"
     archive_url="https://github.com/${REPO}/archive/${REF}.tar.gz"
 
-    if [ "$KEEP_BUILD_DIR" != "1" ]; then
-        trap 'rm -rf "$build_dir"' EXIT
-    else
-        log "Keeping build directory: $build_dir"
+    if [ "$KEEP_BUILD_DIR" = "1" ]; then
+        log "Keeping build directory: $BUILD_DIR"
     fi
 
     log "Downloading verified source: $REF"
-    curl -fsSL "$archive_url" | tar -xz -C "$build_dir" --strip-components=1
-    cd "$build_dir"
+    curl -fsSL "$archive_url" | tar -xz -C "$BUILD_DIR" --strip-components=1
+    cd "$BUILD_DIR"
 
     log "Running tests"
     cargo test --all-targets
