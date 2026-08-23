@@ -302,11 +302,12 @@ impl cosmic::Application for SystemMonitor {
     }
 }
 
-fn summary_cell<'a>(label: &'a str, value: String) -> cosmic::widget::Column<'a, Message> {
+fn summary_cell<'a>(label: &'a str, value: String) -> cosmic::Element<'a, Message> {
     cosmic::widget::column::with_capacity(2)
         .push(cosmic::widget::text::caption(label))
         .push(cosmic::widget::text::body(value))
         .spacing(2)
+        .into()
 }
 
 fn section_title<'a>(title: &'a str) -> cosmic::Element<'a, Message> {
