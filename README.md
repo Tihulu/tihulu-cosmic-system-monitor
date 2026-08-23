@@ -83,4 +83,4 @@ curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor
 
 ## License
 
-GPL-3.0-or-later.
+GNU Affero General Public License v3.0 (AGPLv3). See [LICENSE](LICENSE).
