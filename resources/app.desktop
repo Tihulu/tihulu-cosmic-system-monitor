@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Tihulu System Monitor
+Comment=CPU, GPU, RAM and VRAM monitor for the COSMIC panel
+Type=Application
+Icon=io.github.tihulu.SystemMonitor
+Exec=tihulu-cosmic-system-monitor
+Terminal=false
+StartupNotify=true
+Categories=COSMIC;System;Monitor;
+Keywords=COSMIC;CPU;GPU;RAM;VRAM;temperature;system;monitor;
+NoDisplay=true
+X-CosmicApplet=true
+X-CosmicHoverPopup=Auto
