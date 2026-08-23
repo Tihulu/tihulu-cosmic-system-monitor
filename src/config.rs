@@ -20,6 +20,7 @@ pub(crate) struct PanelConfig {
     pub(crate) show_swap: bool,
     pub(crate) show_vram: bool,
     pub(crate) show_network: bool,
+    pub(crate) psu_name: Option<String>,
 }
 
 impl Default for PanelConfig {
@@ -31,6 +32,7 @@ impl Default for PanelConfig {
             show_swap: true,
             show_vram: true,
             show_network: false,
+            psu_name: None,
         }
     }
 }
@@ -46,8 +48,17 @@ impl PanelConfig {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
-            let enabled = matches!(value.trim(), "1" | "true" | "yes" | "on");
-            match key.trim() {
+            let key = key.trim();
+            let value = value.trim();
+            if key == "psu_name" {
+                if !value.is_empty() {
+                    config.psu_name = Some(value.to_string());
+                }
+                continue;
+            }
+
+            let enabled = matches!(value, "1" | "true" | "yes" | "on");
+            match key {
                 "cpu" => config.show_cpu = enabled,
                 "gpu" => config.show_gpu = enabled,
                 "ram" => config.show_ram = enabled,
@@ -67,14 +78,16 @@ impl PanelConfig {
             let _ = fs::create_dir_all(parent);
         }
 
+        let psu_name = self.psu_name.as_deref().unwrap_or("");
         let contents = format!(
-            "cpu={}\ngpu={}\nram={}\nswap={}\nvram={}\nnetwork={}\n",
+            "cpu={}\ngpu={}\nram={}\nswap={}\nvram={}\nnetwork={}\npsu_name={}\n",
             self.show_cpu,
             self.show_gpu,
             self.show_ram,
             self.show_swap,
             self.show_vram,
             self.show_network,
+            psu_name,
         );
         let _ = fs::write(path, contents);
     }
@@ -117,7 +130,7 @@ impl PanelConfig {
     }
 }
 
-fn config_path() -> PathBuf {
+pub(crate) fn config_path() -> PathBuf {
     if let Some(base) = env::var_os("XDG_CONFIG_HOME") {
         return PathBuf::from(base).join("tihulu-cosmic-system-monitor/panel.conf");
     }
