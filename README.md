@@ -8,7 +8,7 @@ A native **COSMIC panel applet** for Pop!_OS/COSMIC that keeps useful hardware s
 curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor/main/scripts/quick-install.sh | bash
 ```
 
-The stable installer is pinned to the most recently verified build. New `main` changes are not promoted to the one-line installer until CI passes.
+The installer downloads the latest `main`, runs the Rust tests, builds the release binary, and only then installs it. Running the same command again updates the applet.
 
 After installation, open **Settings → Desktop → Panel** and add **Tihulu System Monitor**. If an older copy is already running, remove/re-add the applet or log out and back in.
 
@@ -23,13 +23,13 @@ The panel can show any combination of:
 - **VRAM:** used / total GiB
 - **Network:** current download / upload rate
 
-Everything refreshes every **1 second**.
+Everything refreshes every **1 second**. Swap is shown by default next to RAM.
 
 **Left-click** opens the detailed dashboard. **Right-click** opens the panel display menu, where CPU, GPU, RAM, Swap, VRAM and Network can be enabled or disabled individually. The choices are saved in `~/.config/tihulu-cosmic-system-monitor/panel.conf`.
 
 ## Detailed dashboard
 
-The scrollable dashboard includes:
+The scrollable dashboard is sized for a narrow COSMIC panel popup and includes:
 
 - 60-sample history graphs for CPU usage and CPU temperature
 - 60-sample history graphs for GPU usage and GPU temperature
@@ -75,11 +75,11 @@ sudo install -Dm0644 resources/app.metainfo.xml /usr/share/metainfo/io.github.ti
 sudo install -Dm0644 resources/icon.svg /usr/share/icons/hicolor/scalable/apps/io.github.tihulu.SystemMonitor.svg
 ```
 
-## Install development `main`
+## Install another ref
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor/main/scripts/quick-install.sh \
-  | REF=main bash
+  | REF=<branch-tag-or-commit> bash
 ```
 
 ## Uninstall
