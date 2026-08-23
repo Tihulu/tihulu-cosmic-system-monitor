@@ -10,9 +10,9 @@ use crate::{
 };
 
 const SYSTEM_MONITOR_APP_ID: &str = "io.github.tihulu.SystemMonitor";
-const POPUP_WIDTH: f32 = 520.0;
-const POPUP_HEIGHT: f32 = 500.0;
-const GRAPH_HEIGHT: f32 = 56.0;
+const POPUP_WIDTH: f32 = 340.0;
+const POPUP_HEIGHT: f32 = 540.0;
+const GRAPH_HEIGHT: f32 = 52.0;
 
 pub(crate) fn run() -> cosmic::iced::Result {
     cosmic::applet::run::<SystemMonitor>(())
@@ -31,6 +31,7 @@ enum DashboardTab {
     Gpu,
     Memory,
     Network,
+    Psu,
 }
 
 struct SystemMonitor {
@@ -127,21 +128,27 @@ impl SystemMonitor {
     }
 
     fn dashboard_header(&self) -> cosmic::Element<'_, Message> {
-        cosmic::widget::column::with_capacity(3)
+        cosmic::widget::column::with_capacity(4)
             .push(cosmic::widget::text("Tihulu System Monitor").size(20))
             .push(cosmic::widget::text::caption(
                 "Live hardware dashboard · 1 s refresh · last 60 samples",
             ))
             .push(
-                cosmic::widget::row::with_capacity(5)
+                cosmic::widget::row::with_capacity(3)
                     .push(tab_button("Overview", DashboardTab::Overview, self.dashboard_tab))
                     .push(tab_button("CPU", DashboardTab::Cpu, self.dashboard_tab))
                     .push(tab_button("GPU", DashboardTab::Gpu, self.dashboard_tab))
+                    .spacing(4),
+            )
+            .push(
+                cosmic::widget::row::with_capacity(3)
                     .push(tab_button("Memory", DashboardTab::Memory, self.dashboard_tab))
                     .push(tab_button("Network", DashboardTab::Network, self.dashboard_tab))
-                    .spacing(6),
+                    .push(tab_button("PSU", DashboardTab::Psu, self.dashboard_tab))
+                    .spacing(4),
             )
-            .spacing(8)
+            .spacing(6)
+            .width(Length::Fill)
             .into()
     }
 
@@ -165,17 +172,17 @@ impl SystemMonitor {
                             self.stats.gpu_temperature_text()
                         ),
                     ))
-                    .spacing(16),
+                    .spacing(12),
             )
             .push(
                 cosmic::widget::row::with_capacity(2)
-                    .push(summary_cell("RAM", self.stats.ram_usage_text()))
-                    .push(summary_cell("Swap", self.stats.swap_usage_text()))
-                    .spacing(16),
+                    .push(summary_cell("RAM", self.stats.ram_percent_text()))
+                    .push(summary_cell("Swap", self.stats.swap_percent_text()))
+                    .spacing(12),
             )
             .push(
                 cosmic::widget::row::with_capacity(2)
-                    .push(summary_cell("VRAM", self.stats.vram_usage_text()))
+                    .push(summary_cell("VRAM", self.stats.vram_percent_text()))
                     .push(summary_cell(
                         "Network",
                         format!(
@@ -184,7 +191,7 @@ impl SystemMonitor {
                             self.stats.network_upload_text()
                         ),
                     ))
-                    .spacing(16),
+                    .spacing(12),
             )
             .push(section_title("60-second history"))
             .push(graph_card(
@@ -197,7 +204,7 @@ impl SystemMonitor {
                 self.stats.gpu_usage_text(),
                 self.stats.gpu_usage_graph(),
             ))
-            .spacing(10)
+            .spacing(8)
             .into()
     }
 
@@ -212,11 +219,14 @@ impl SystemMonitor {
         }
 
         cosmic::widget::column::with_capacity(11)
-            .push(metric_row("Model", self.stats.cpu_model_text()))
-            .push(metric_row("Cores", self.stats.cpu_topology_text()))
-            .push(metric_row("Average clock", self.stats.cpu_frequency_text()))
-            .push(metric_row("Load avg 1 / 5 / 15", self.stats.load_average_text()))
-            .push(metric_row("Uptime", self.stats.uptime_text()))
+            .push(metric_block("Model", self.stats.cpu_model_text()))
+            .push(metric_block("Cores", self.stats.cpu_topology_text()))
+            .push(metric_block("Average clock", self.stats.cpu_frequency_text()))
+            .push(metric_block(
+                "Load avg 1 / 5 / 15",
+                self.stats.load_average_text(),
+            ))
+            .push(metric_block("Uptime", self.stats.uptime_text()))
             .push(graph_card(
                 "CPU usage",
                 self.stats.cpu_usage_text(),
@@ -233,12 +243,38 @@ impl SystemMonitor {
     }
 
     fn gpu_tab(&self) -> cosmic::Element<'_, Message> {
-        cosmic::widget::column::with_capacity(10)
-            .push(metric_row("Model", self.stats.gpu_name_text()))
-            .push(metric_row("Driver", self.stats.gpu_driver_text()))
-            .push(metric_row("Power", self.stats.gpu_power_text()))
-            .push(metric_row("Clocks", self.stats.gpu_clocks_text()))
-            .push(metric_row("VRAM", self.stats.vram_usage_text()))
+        cosmic::widget::column::with_capacity(18)
+            .push(metric_block("Model", self.stats.gpu_name_text()))
+            .push(metric_block("Driver", self.stats.gpu_driver_text()))
+            .push(metric_block(
+                "Architecture",
+                self.stats.gpu_architecture_text(),
+            ))
+            .push(metric_block(
+                "SM / CUDA cores",
+                self.stats.gpu_compute_units_text(),
+            ))
+            .push(metric_block(
+                "Tensor / RT cores",
+                self.stats.gpu_tensor_rt_text(),
+            ))
+            .push(metric_block(
+                "GPC / TPC partitions",
+                self.stats.gpu_partition_text(),
+            ))
+            .push(metric_block(
+                "Texture / raster units",
+                self.stats.gpu_raster_text(),
+            ))
+            .push(metric_block("Media engines", self.stats.gpu_media_text()))
+            .push(metric_block("CUDA", self.stats.gpu_cuda_text()))
+            .push(metric_block(
+                "Memory interface",
+                self.stats.gpu_memory_bus_text(),
+            ))
+            .push(metric_block("Power", self.stats.gpu_power_text()))
+            .push(metric_block("Clocks", self.stats.gpu_clocks_text()))
+            .push(metric_block("VRAM", self.stats.vram_usage_text()))
             .push(graph_card(
                 "GPU usage",
                 self.stats.gpu_usage_text(),
@@ -249,25 +285,25 @@ impl SystemMonitor {
                 self.stats.gpu_temperature_text(),
                 self.stats.gpu_temperature_graph(),
             ))
-            .spacing(8)
+            .spacing(7)
             .into()
     }
 
     fn memory_tab(&self) -> cosmic::Element<'_, Message> {
         cosmic::widget::column::with_capacity(10)
-            .push(metric_row("RAM", self.stats.ram_usage_text()))
+            .push(metric_block("RAM", self.stats.ram_usage_text()))
             .push(graph_card(
                 "RAM",
                 self.stats.ram_percent_text(),
                 self.stats.ram_graph(),
             ))
-            .push(metric_row("Swap", self.stats.swap_usage_text()))
+            .push(metric_block("Swap", self.stats.swap_usage_text()))
             .push(graph_card(
                 "Swap",
                 self.stats.swap_percent_text(),
                 self.stats.swap_graph(),
             ))
-            .push(metric_row("VRAM", self.stats.vram_usage_text()))
+            .push(metric_block("VRAM", self.stats.vram_usage_text()))
             .push(graph_card(
                 "VRAM",
                 self.stats.vram_percent_text(),
@@ -279,15 +315,15 @@ impl SystemMonitor {
 
     fn network_tab(&self) -> cosmic::Element<'_, Message> {
         cosmic::widget::column::with_capacity(8)
-            .push(metric_row(
+            .push(metric_block(
                 "Interfaces",
                 self.stats.network_interfaces_text(),
             ))
-            .push(metric_row(
+            .push(metric_block(
                 "Download",
                 self.stats.network_download_text(),
             ))
-            .push(metric_row("Upload", self.stats.network_upload_text()))
+            .push(metric_block("Upload", self.stats.network_upload_text()))
             .push(graph_card(
                 "Network download",
                 self.stats.network_download_text(),
@@ -302,6 +338,51 @@ impl SystemMonitor {
             .into()
     }
 
+    fn psu_tab(&self) -> cosmic::Element<'_, Message> {
+        let supply_lines = self.stats.power_supply_lines();
+        let sensor_lines = self.stats.power_sensor_lines();
+
+        let mut content = cosmic::widget::column::with_capacity(
+            supply_lines.len() + sensor_lines.len() + 6,
+        )
+        .push(section_title("PSU / power"))
+        .push(metric_block(
+            "GPU board power",
+            self.stats.gpu_power_text(),
+        ));
+
+        if supply_lines.is_empty() {
+            content = content.push(metric_block(
+                "PSU / AC telemetry",
+                "Not exposed by this hardware/driver".into(),
+            ));
+        } else {
+            content = content.push(section_title("Power supplies exposed by Linux"));
+            for line in supply_lines {
+                content = content.push(metric_block("Supply", line.clone()));
+            }
+        }
+
+        if sensor_lines.is_empty() {
+            content = content.push(metric_block(
+                "hwmon power sensors",
+                "No additional power sensors exposed".into(),
+            ));
+        } else {
+            content = content.push(section_title("Other reported power sensors"));
+            for line in sensor_lines {
+                content = content.push(metric_block("Sensor", line.clone()));
+            }
+        }
+
+        content
+            .push(cosmic::widget::text::caption(
+                "Desktop ATX PSUs usually do not expose model, rated wattage, rail current, efficiency or total wall draw to Linux. hwmon readings above are individual device sensors, not guaranteed PSU total power.",
+            ))
+            .spacing(8)
+            .into()
+    }
+
     fn dashboard_view(&self) -> cosmic::Element<'_, Message> {
         let body = match self.dashboard_tab {
             DashboardTab::Overview => self.overview_tab(),
@@ -309,12 +390,13 @@ impl SystemMonitor {
             DashboardTab::Gpu => self.gpu_tab(),
             DashboardTab::Memory => self.memory_tab(),
             DashboardTab::Network => self.network_tab(),
+            DashboardTab::Psu => self.psu_tab(),
         };
 
         let dashboard = cosmic::widget::column::with_capacity(2)
             .push(self.dashboard_header())
             .push(body)
-            .spacing(12)
+            .spacing(10)
             .width(Length::Fill);
 
         let scroll = cosmic::widget::scrollable(dashboard)
@@ -442,6 +524,7 @@ fn tab_button<'a>(
     let marker = if tab == active { "●" } else { "○" };
     cosmic::widget::button::custom(cosmic::widget::text::caption(format!("{marker} {label}")))
         .on_press(Message::SetDashboardTab(tab))
+        .width(Length::FillPortion(1))
         .into()
 }
 
@@ -467,7 +550,7 @@ fn panel_metric_button<'a>(
 fn summary_cell<'a>(label: &'a str, value: String) -> cosmic::Element<'a, Message> {
     cosmic::widget::column::with_capacity(2)
         .push(cosmic::widget::text::caption(label))
-        .push(cosmic::widget::text::body(value))
+        .push(cosmic::widget::text::body(value).width(Length::Fill))
         .spacing(2)
         .width(Length::FillPortion(1))
         .into()
@@ -477,12 +560,11 @@ fn section_title<'a>(title: &'a str) -> cosmic::Element<'a, Message> {
     cosmic::widget::text(title).size(16).into()
 }
 
-fn metric_row<'a>(label: &'a str, value: String) -> cosmic::Element<'a, Message> {
-    cosmic::widget::row::with_capacity(3)
-        .push(cosmic::widget::text::body(label))
-        .push(cosmic::widget::space::horizontal())
-        .push(cosmic::widget::text::body(value))
-        .spacing(8)
+fn metric_block<'a>(label: &'a str, value: String) -> cosmic::Element<'a, Message> {
+    cosmic::widget::column::with_capacity(2)
+        .push(cosmic::widget::text::caption(label))
+        .push(cosmic::widget::text::body(value).width(Length::Fill))
+        .spacing(1)
         .width(Length::Fill)
         .into()
 }
@@ -490,7 +572,7 @@ fn metric_row<'a>(label: &'a str, value: String) -> cosmic::Element<'a, Message>
 fn graph_card<'a>(label: &'a str, value: String, svg: String) -> cosmic::Element<'a, Message> {
     let icon = cosmic::widget::icon::from_svg_bytes(svg.into_bytes()).symbolic(true);
     cosmic::widget::column::with_capacity(2)
-        .push(metric_row(label, value))
+        .push(metric_block(label, value))
         .push(
             icon.icon()
                 .height(Length::Fixed(GRAPH_HEIGHT))
