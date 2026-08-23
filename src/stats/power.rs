@@ -3,6 +3,7 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -14,6 +15,7 @@ pub(super) struct PowerSnapshot {
 pub(super) fn read_power_snapshot() -> PowerSnapshot {
     let mut supplies = read_power_supplies();
     supplies.extend(read_smart_psu_hwmon());
+    supplies.extend(read_dmi_psu_info());
     if let Some(name) = read_configured_psu_name() {
         supplies.push(format!("Configured PSU: {name}"));
     }
@@ -99,6 +101,187 @@ fn read_smart_psu_hwmon() -> Vec<String> {
     lines
 }
 
+fn read_dmi_psu_info() -> Vec<String> {
+    let mut lines = read_dmi_type39_sysfs();
+    if lines.is_empty() {
+        lines = read_dmidecode_type39();
+    }
+    lines.sort();
+    lines.dedup();
+    lines
+}
+
+fn read_dmi_type39_sysfs() -> Vec<String> {
+    let Ok(entries) = fs::read_dir("/sys/firmware/dmi/entries") else {
+        return Vec::new();
+    };
+
+    let mut lines = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("39-") {
+            continue;
+        }
+        let Ok(raw) = fs::read(entry.path().join("raw")) else {
+            continue;
+        };
+        if let Some(line) = parse_smbios_type39(&raw) {
+            lines.push(line);
+        }
+    }
+    lines
+}
+
+fn parse_smbios_type39(raw: &[u8]) -> Option<String> {
+    if raw.len() < 16 || raw[0] != 39 {
+        return None;
+    }
+    let formatted_len = raw[1] as usize;
+    if formatted_len < 16 || formatted_len > raw.len() {
+        return None;
+    }
+
+    let location = smbios_string(raw, formatted_len, raw[5]);
+    let device_name = smbios_string(raw, formatted_len, raw[6]);
+    let manufacturer = smbios_string(raw, formatted_len, raw[7]);
+    let model = smbios_string(raw, formatted_len, raw[10]);
+    let max_power = u16::from_le_bytes([raw[12], raw[13]]);
+
+    let mut identity = [manufacturer, model, device_name, location]
+        .into_iter()
+        .flatten()
+        .filter(|value| !is_placeholder(value))
+        .collect::<Vec<_>>();
+    identity.dedup();
+
+    if identity.is_empty() && (max_power == 0 || max_power == u16::MAX) {
+        return None;
+    }
+
+    let mut line = if identity.is_empty() {
+        "SMBIOS System Power Supply".to_string()
+    } else {
+        format!("SMBIOS PSU: {}", identity.join(" · "))
+    };
+    if max_power != 0 && max_power != u16::MAX {
+        line.push_str(&format!(" · {max_power} W max"));
+    }
+    Some(line)
+}
+
+fn smbios_string(raw: &[u8], formatted_len: usize, index: u8) -> Option<String> {
+    if index == 0 || formatted_len >= raw.len() {
+        return None;
+    }
+
+    let strings = &raw[formatted_len..];
+    let mut current = 1u8;
+    let mut start = 0usize;
+    for end in 0..=strings.len() {
+        if end == strings.len() || strings[end] == 0 {
+            if current == index {
+                let value = String::from_utf8_lossy(&strings[start..end]).trim().to_string();
+                return (!value.is_empty()).then_some(value);
+            }
+            if end == strings.len() || (end + 1 < strings.len() && strings[end + 1] == 0) {
+                break;
+            }
+            current = current.saturating_add(1);
+            start = end + 1;
+        }
+    }
+    None
+}
+
+fn read_dmidecode_type39() -> Vec<String> {
+    let Ok(output) = Command::new("dmidecode").args(["--type", "39"]).output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    parse_dmidecode_type39(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_dmidecode_type39(contents: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut manufacturer: Option<String> = None;
+    let mut model: Option<String> = None;
+    let mut name: Option<String> = None;
+    let mut location: Option<String> = None;
+    let mut max_power: Option<String> = None;
+
+    let flush = |lines: &mut Vec<String>,
+                 manufacturer: &mut Option<String>,
+                 model: &mut Option<String>,
+                 name: &mut Option<String>,
+                 location: &mut Option<String>,
+                 max_power: &mut Option<String>| {
+        let mut parts = [manufacturer.take(), model.take(), name.take(), location.take()]
+            .into_iter()
+            .flatten()
+            .filter(|value| !is_placeholder(value))
+            .collect::<Vec<_>>();
+        parts.dedup();
+        if !parts.is_empty() || max_power.is_some() {
+            let mut line = if parts.is_empty() {
+                "SMBIOS System Power Supply".to_string()
+            } else {
+                format!("SMBIOS PSU: {}", parts.join(" · "))
+            };
+            if let Some(power) = max_power.take() {
+                if !is_placeholder(&power) {
+                    line.push_str(&format!(" · {power}"));
+                }
+            }
+            lines.push(line);
+        }
+    };
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("System Power Supply") || trimmed.starts_with("Handle ") {
+            flush(
+                &mut lines,
+                &mut manufacturer,
+                &mut model,
+                &mut name,
+                &mut location,
+                &mut max_power,
+            );
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().to_string();
+        match key.trim() {
+            "Manufacturer" => manufacturer = Some(value),
+            "Model Part Number" => model = Some(value),
+            "Name" | "Device Name" => name = Some(value),
+            "Location" => location = Some(value),
+            "Max Power Capacity" => max_power = Some(value),
+            _ => {}
+        }
+    }
+    flush(
+        &mut lines,
+        &mut manufacturer,
+        &mut model,
+        &mut name,
+        &mut location,
+        &mut max_power,
+    );
+    lines
+}
+
+fn is_placeholder(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "unknown" | "not specified" | "none" | "n/a" | "to be filled by o.e.m."
+    )
+}
+
 fn append_psu_sensor_lines(path: &Path, lines: &mut Vec<String>) {
     for index in 1..=16 {
         let input = path.join(format!("power{index}_input"));
@@ -108,8 +291,13 @@ fn append_psu_sensor_lines(path: &Path, lines: &mut Vec<String>) {
             0.5,
         );
         if let Some(power_w) = power_w {
-            let label = read_text(path.join(format!("power{index}_label")))
-                .unwrap_or_else(|| if index == 1 { "Total/input power".into() } else { format!("Power {index}") });
+            let label = read_text(path.join(format!("power{index}_label"))).unwrap_or_else(|| {
+                if index == 1 {
+                    "Total/input power".into()
+                } else {
+                    format!("Power {index}")
+                }
+            });
             lines.push(format!("{label}: {power_w:.1} W"));
         }
 
@@ -129,8 +317,13 @@ fn append_psu_sensor_lines(path: &Path, lines: &mut Vec<String>) {
             read_milli_value(path.join(format!("in{index}_input"))),
             0.01,
         ) {
-            let label = read_text(path.join(format!("in{index}_label")))
-                .unwrap_or_else(|| if index == 0 { "AC/input voltage".into() } else { format!("Voltage {index}") });
+            let label = read_text(path.join(format!("in{index}_label"))).unwrap_or_else(|| {
+                if index == 0 {
+                    "AC/input voltage".into()
+                } else {
+                    format!("Voltage {index}")
+                }
+            });
             lines.push(format!("{label}: {voltage_v:.2} V"));
         }
     }
@@ -140,8 +333,13 @@ fn append_psu_sensor_lines(path: &Path, lines: &mut Vec<String>) {
             read_milli_value(path.join(format!("curr{index}_input"))),
             0.001,
         ) {
-            let label = read_text(path.join(format!("curr{index}_label")))
-                .unwrap_or_else(|| if index == 1 { "Total/input current".into() } else { format!("Current {index}") });
+            let label = read_text(path.join(format!("curr{index}_label"))).unwrap_or_else(|| {
+                if index == 1 {
+                    "Total/input current".into()
+                } else {
+                    format!("Current {index}")
+                }
+            });
             lines.push(format!("{label}: {current_a:.2} A"));
         }
     }
@@ -221,8 +419,21 @@ fn is_psu_hwmon(path: &Path, chip: &str, driver: Option<&str>, labels: &[String]
 
     let joined_labels = labels.join(" ").to_ascii_lowercase();
     let psu_label_hint = [
-        "psu", "power supply", "pin", "pout", "vin", "vout", "iin", "iout",
-        "ac input", "input power", "output power", "total power", "12v", "5v", "3.3v",
+        "psu",
+        "power supply",
+        "pin",
+        "pout",
+        "vin",
+        "vout",
+        "iin",
+        "iout",
+        "ac input",
+        "input power",
+        "output power",
+        "total power",
+        "12v",
+        "5v",
+        "3.3v",
     ]
     .iter()
     .any(|needle| joined_labels.contains(needle));
@@ -233,11 +444,7 @@ fn is_psu_hwmon(path: &Path, chip: &str, driver: Option<&str>, labels: &[String]
     let has_fan = has_sensor(path, "fan", &["_input"]);
     let has_temp = has_sensor(path, "temp", &["_input"]);
 
-    has_power
-        && psu_label_hint
-        && has_voltage
-        && has_current
-        && (has_fan || has_temp)
+    has_power && psu_label_hint && has_voltage && has_current && (has_fan || has_temp)
 }
 
 fn is_known_psu_identifier(value: &str) -> bool {
@@ -268,9 +475,7 @@ fn is_known_psu_identifier(value: &str) -> bool {
 }
 
 fn normalize_identifier(value: &str) -> String {
-    value
-        .to_ascii_lowercase()
-        .replace(['-', ' ', '/'], "_")
+    value.to_ascii_lowercase().replace(['-', ' ', '/'], "_")
 }
 
 fn collect_sensor_labels(path: &Path) -> Vec<String> {
@@ -282,7 +487,9 @@ fn collect_sensor_labels(path: &Path) -> Vec<String> {
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().to_string();
-            name.ends_with("_label").then(|| read_text(entry.path())).flatten()
+            name.ends_with("_label")
+                .then(|| read_text(entry.path()))
+                .flatten()
         })
         .collect::<Vec<_>>();
     labels.sort();
@@ -412,5 +619,26 @@ mod tests {
     fn normalizes_driver_names() {
         assert_eq!(normalize_identifier("IBM CFFPS"), "ibm_cffps");
         assert_eq!(normalize_identifier("BPA-RS600"), "bpa_rs600");
+    }
+
+    #[test]
+    fn parses_smbios_type39_identity() {
+        let mut raw = vec![39, 0x16, 0, 0, 0, 1, 2, 3, 0, 0, 4, 0];
+        raw.extend_from_slice(&1000u16.to_le_bytes());
+        raw.resize(0x16, 0);
+        raw.extend_from_slice(b"Rear PSU\0System PSU\0be quiet!\0Straight Power 12 1000W\0\0");
+        let line = parse_smbios_type39(&raw).unwrap();
+        assert!(line.contains("be quiet!"));
+        assert!(line.contains("Straight Power 12 1000W"));
+        assert!(line.contains("1000 W max"));
+    }
+
+    #[test]
+    fn parses_dmidecode_type39_identity() {
+        let text = "System Power Supply\n\tLocation: PSU Bay\n\tName: Main PSU\n\tManufacturer: be quiet!\n\tModel Part Number: Dark Power 13 1000W\n\tMax Power Capacity: 1000 W\n";
+        let lines = parse_dmidecode_type39(text);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("be quiet!"));
+        assert!(lines[0].contains("Dark Power 13 1000W"));
     }
 }
