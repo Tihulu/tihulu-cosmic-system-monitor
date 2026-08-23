@@ -2,7 +2,12 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+
+permissions:
+  contents: write
 
 jobs:
   rust:
@@ -26,3 +31,14 @@ jobs:
         run: cargo test --all-targets
       - name: Clippy
         run: cargo clippy --all-targets
+
+  promote-stable:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Promote CI-verified commit to stable
+        run: git push --force origin "${GITHUB_SHA}:refs/heads/stable"

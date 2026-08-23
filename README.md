@@ -5,10 +5,10 @@ A native **COSMIC panel applet** for Pop!_OS/COSMIC that keeps useful hardware s
 ## Install / update — one line
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor/main/scripts/quick-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor/stable/scripts/quick-install.sh | bash
 ```
 
-The installer downloads the latest `main`, runs the Rust tests, builds the release binary, and only then installs it. Running the same command again updates the applet.
+The one-line installer always installs the **CI-verified `stable` branch**. New changes are developed on `main`; only after GitHub Actions finishes successfully does CI automatically promote that exact commit to `stable`. If CI is red, the installer keeps using the previous known-good build.
 
 After installation, open **Settings → Desktop → Panel** and add **Tihulu System Monitor**. If an older copy is already running, remove/re-add the applet or log out and back in.
 
@@ -29,7 +29,7 @@ Everything refreshes every **1 second**. Swap is shown by default next to RAM.
 
 ## Detailed dashboard
 
-The scrollable dashboard is sized for a narrow COSMIC panel popup and includes:
+The dashboard uses tabs for **Overview, CPU, GPU, Memory and Network**, with a wider popup for readable metrics. Long sections can still scroll vertically.
 
 - 60-sample history graphs for CPU usage and CPU temperature
 - 60-sample history graphs for GPU usage and GPU temperature
@@ -75,17 +75,17 @@ sudo install -Dm0644 resources/app.metainfo.xml /usr/share/metainfo/io.github.ti
 sudo install -Dm0644 resources/icon.svg /usr/share/icons/hicolor/scalable/apps/io.github.tihulu.SystemMonitor.svg
 ```
 
-## Install another ref
+## Install a development ref
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor/main/scripts/quick-install.sh \
+curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor/stable/scripts/quick-install.sh \
   | REF=<branch-tag-or-commit> bash
 ```
 
 ## Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor/main/scripts/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor/stable/scripts/uninstall.sh | bash
 ```
 
 ## License

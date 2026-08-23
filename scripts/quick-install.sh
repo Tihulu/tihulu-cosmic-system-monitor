@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 
 REPO="${REPO:-Tihulu/tihulu-cosmic-system-monitor}"
-REF="${REF:-main}"
+REF="${REF:-stable}"
 PREFIX="${PREFIX:-/usr}"
 KEEP_BUILD_DIR="${KEEP_BUILD_DIR:-0}"
 APP_ID="io.github.tihulu.SystemMonitor"
@@ -90,7 +90,7 @@ main() {
         log "Keeping build directory: $BUILD_DIR"
     fi
 
-    log "Downloading source: $REF"
+    log "Downloading CI-verified source: $REF"
     curl -fsSL "$archive_url" | tar -xz -C "$BUILD_DIR" --strip-components=1
     cd "$BUILD_DIR"
 
