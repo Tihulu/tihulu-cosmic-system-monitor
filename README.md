@@ -29,17 +29,23 @@ Everything refreshes every **1 second**. Swap is shown by default next to RAM.
 
 ## Detailed dashboard
 
-The dashboard uses tabs for **Overview, CPU, GPU, Memory and Network**, with a wider popup for readable metrics. Long sections can still scroll vertically.
+COSMIC currently constrains the practical applet popup width, so the dashboard is designed for the actual narrow popup instead of requesting a wider window. Long values are stacked below their labels, tabs are split across two rows, and long sections scroll vertically.
+
+Tabs: **Overview, CPU, GPU, Memory, Network, PSU**.
 
 - 60-sample history graphs for CPU usage and CPU temperature
 - 60-sample history graphs for GPU usage and GPU temperature
 - RAM, Swap and VRAM usage history
 - Network download/upload history and current RX/TX rates
 - CPU model, physical/logical core count, average clock, load average and uptime
-- Per-logical-core CPU usage with live utilization bars
-- GPU model, NVIDIA driver, power draw / power limit, core and memory clocks
-- RAM, Swap and VRAM detailed usage
-- Active network interfaces
+- Per-logical-core CPU usage
+- GPU model, driver, board power, clocks and VRAM
+- NVIDIA GPU topology where a verified model specification is available: SMs, CUDA cores, Tensor cores, RT cores, GPC/TPC partitions, texture units, ROPs, media engines, compute capability and memory bus
+- PSU / power-supply information exposed through Linux power-supply and hwmon interfaces
+
+For the desktop **GeForce RTX 5080**, the GPU tab includes the verified GB203/Blackwell topology: 84 SMs, 10,752 CUDA cores, 336 fifth-generation Tensor cores, 84 fourth-generation RT cores, 7 GPCs, 42 TPCs, 336 texture units and 112 ROPs.
+
+Desktop ATX PSUs normally do **not** expose their model, rated wattage, efficiency, rail telemetry or total wall draw to Linux. The PSU tab therefore shows only values the hardware/driver actually exposes and clearly marks unavailable PSU telemetry instead of guessing.
 
 The applet samples continuously, so history keeps filling even while the popup is closed.
 
@@ -49,10 +55,11 @@ No monitoring daemon is required.
 
 - CPU usage and per-core usage: `/proc/stat`
 - CPU model / frequency: `/proc/cpuinfo`
-- CPU temperature: `/sys/class/hwmon` with thermal-zone fallback
+- CPU temperature and power sensors: `/sys/class/hwmon`
 - RAM / Swap: `/proc/meminfo`
 - Network: `/proc/net/dev`
-- NVIDIA GPU: `nvidia-smi`
+- PSU / AC / battery information: `/sys/class/power_supply`
+- NVIDIA runtime GPU data: `nvidia-smi`
 - AMD/DRM fallback: Linux DRM/sysfs where available
 
 ## Requirements
