@@ -5,6 +5,7 @@ mod display;
 mod gpu;
 mod memory;
 mod network;
+mod power;
 
 use std::collections::VecDeque;
 
@@ -16,9 +17,10 @@ use display::{
     format_memory, format_memory_long, format_percent, format_rate, format_temperature,
     format_uptime, line_svg_auto, line_svg_fixed, percent_of, push_optional, usage_bar,
 };
-use gpu::{GpuSample, query_drm_gpu, query_nvidia_smi};
+use gpu::{GpuSample, GpuSpecs, query_drm_gpu, query_nvidia_smi};
 use memory::read_memory;
 use network::{NetworkSample, read_network_totals};
+use power::read_power_snapshot;
 
 pub(super) const KIB: u64 = 1024;
 pub(super) const MIB: u64 = 1024 * KIB;
@@ -51,6 +53,7 @@ pub(crate) struct SystemStats {
     gpu_power_limit_w: Option<f64>,
     gpu_graphics_clock_mhz: Option<f64>,
     gpu_memory_clock_mhz: Option<f64>,
+    gpu_specs: Option<GpuSpecs>,
 
     ram_used_bytes: Option<u64>,
     ram_total_bytes: Option<u64>,
@@ -60,6 +63,9 @@ pub(crate) struct SystemStats {
     network_rx_bytes_per_sec: Option<f64>,
     network_tx_bytes_per_sec: Option<f64>,
     network_interfaces: Vec<String>,
+
+    power_supply_lines: Vec<String>,
+    power_sensor_lines: Vec<String>,
 
     cpu_usage_history: VecDeque<f64>,
     cpu_temp_history: VecDeque<f64>,
@@ -90,6 +96,11 @@ impl SystemStats {
 
         self.apply_gpu(query_nvidia_smi().unwrap_or_else(query_drm_gpu));
         self.refresh_network();
+
+        let power = read_power_snapshot();
+        self.power_supply_lines = power.supplies;
+        self.power_sensor_lines = power.sensors;
+
         self.record_history();
     }
 
@@ -140,6 +151,9 @@ impl SystemStats {
         }
         if gpu.driver_version.is_some() {
             self.gpu_driver_version = gpu.driver_version;
+        }
+        if gpu.specs.is_some() {
+            self.gpu_specs = gpu.specs;
         }
         self.gpu_power_draw_w = gpu.power_draw_w;
         self.gpu_power_limit_w = gpu.power_limit_w;
@@ -328,6 +342,90 @@ impl SystemStats {
         }
     }
 
+    pub(crate) fn gpu_architecture_text(&self) -> String {
+        self.gpu_specs
+            .as_ref()
+            .map(|specs| match (&specs.architecture, &specs.codename) {
+                (Some(architecture), Some(codename)) => format!("{architecture} ({codename})"),
+                (Some(architecture), None) => architecture.clone(),
+                _ => "Not exposed by driver for this model".into(),
+            })
+            .unwrap_or_else(|| "Not exposed by driver for this model".into())
+    }
+
+    pub(crate) fn gpu_compute_units_text(&self) -> String {
+        self.gpu_specs
+            .as_ref()
+            .and_then(|specs| Some(format!("{} SM · {} CUDA cores", specs.sm_count?, specs.cuda_cores?)))
+            .unwrap_or_else(|| "Not exposed by driver for this model".into())
+    }
+
+    pub(crate) fn gpu_tensor_rt_text(&self) -> String {
+        let Some(specs) = self.gpu_specs.as_ref() else {
+            return "Not exposed by driver for this model".into();
+        };
+        match (specs.tensor_cores, specs.rt_cores) {
+            (Some(tensor), Some(rt)) => format!(
+                "{tensor} Tensor ({}) · {rt} RT ({})",
+                specs.tensor_generation.as_deref().unwrap_or("generation unknown"),
+                specs.rt_generation.as_deref().unwrap_or("generation unknown")
+            ),
+            _ => "Not exposed by driver for this model".into(),
+        }
+    }
+
+    pub(crate) fn gpu_partition_text(&self) -> String {
+        self.gpu_specs
+            .as_ref()
+            .and_then(|specs| Some(format!("{} GPC · {} TPC", specs.gpcs?, specs.tpcs?)))
+            .unwrap_or_else(|| "--".into())
+    }
+
+    pub(crate) fn gpu_raster_text(&self) -> String {
+        self.gpu_specs
+            .as_ref()
+            .and_then(|specs| {
+                Some(format!(
+                    "{} texture units · {} ROPs",
+                    specs.texture_units?, specs.rops?
+                ))
+            })
+            .unwrap_or_else(|| "--".into())
+    }
+
+    pub(crate) fn gpu_media_text(&self) -> String {
+        self.gpu_specs
+            .as_ref()
+            .map(|specs| {
+                [specs.nvenc.clone(), specs.nvdec.clone()]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            })
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "--".into())
+    }
+
+    pub(crate) fn gpu_cuda_text(&self) -> String {
+        self.gpu_specs
+            .as_ref()
+            .and_then(|specs| specs.compute_capability.as_ref())
+            .map(|capability| format!("CUDA compute capability {capability}"))
+            .unwrap_or_else(|| "--".into())
+    }
+
+    pub(crate) fn gpu_memory_bus_text(&self) -> String {
+        self.gpu_specs
+            .as_ref()
+            .map(|specs| match (&specs.memory_type, specs.memory_bus_bits) {
+                (Some(memory_type), Some(bits)) => format!("{memory_type} · {bits}-bit bus"),
+                (Some(memory_type), None) => memory_type.clone(),
+                _ => "--".into(),
+            })
+            .unwrap_or_else(|| "--".into())
+    }
+
     pub(crate) fn network_download_text(&self) -> String {
         format_rate(self.network_rx_bytes_per_sec)
     }
@@ -342,6 +440,14 @@ impl SystemStats {
         } else {
             self.network_interfaces.join(", ")
         }
+    }
+
+    pub(crate) fn power_supply_lines(&self) -> &[String] {
+        &self.power_supply_lines
+    }
+
+    pub(crate) fn power_sensor_lines(&self) -> &[String] {
+        &self.power_sensor_lines
     }
 
     pub(crate) fn cpu_usage_graph(&self) -> String {
