@@ -28,7 +28,7 @@ impl Default for PanelConfig {
             show_cpu: true,
             show_gpu: true,
             show_ram: true,
-            show_swap: false,
+            show_swap: true,
             show_vram: true,
             show_network: false,
         }
