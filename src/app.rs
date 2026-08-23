@@ -42,8 +42,15 @@ enum Message {
 
 impl SystemMonitor {
     fn toggle_popup(&mut self, kind: PopupKind) -> cosmic::app::Task<Message> {
-        if let Some(id) = self.popup.take() {
-            return cosmic::iced::platform_specific::shell::commands::popup::destroy_popup(id);
+        if let Some(id) = self.popup {
+            if self.popup_kind == kind {
+                self.popup = None;
+                return cosmic::iced::platform_specific::shell::commands::popup::destroy_popup(id);
+            }
+
+            self.popup_kind = kind;
+            self.stats.refresh();
+            return cosmic::task::none();
         }
 
         self.stats.refresh();
@@ -99,7 +106,7 @@ impl SystemMonitor {
                 self.panel_config.is_visible(PanelMetric::Network),
             ))
             .push(cosmic::widget::text::caption(
-                "Left-click the applet for the detailed dashboard. Right-click here again to close.",
+                "Left-click the applet for the dashboard. Right-click again to close.",
             ))
             .spacing(8)
             .width(Length::Fixed(POPUP_WIDTH));
