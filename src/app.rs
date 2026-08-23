@@ -2,9 +2,12 @@
 
 use std::time::Duration;
 
-use cosmic::iced::{Length, window::Id};
+use cosmic::iced::{Length, widget::mouse_area, window::Id};
 
-use crate::stats::SystemStats;
+use crate::{
+    config::{PanelConfig, PanelMetric},
+    stats::SystemStats,
+};
 
 const SYSTEM_MONITOR_APP_ID: &str = "io.github.tihulu.SystemMonitor";
 const POPUP_WIDTH: f32 = 330.0;
@@ -14,112 +17,98 @@ pub(crate) fn run() -> cosmic::iced::Result {
     cosmic::applet::run::<SystemMonitor>(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PopupKind {
+    Dashboard,
+    PanelSettings,
+}
+
 struct SystemMonitor {
     core: cosmic::app::Core,
     popup: Option<Id>,
+    popup_kind: PopupKind,
+    panel_config: PanelConfig,
     stats: SystemStats,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
     Tick,
-    TogglePopup,
+    ToggleDashboard,
+    OpenPanelSettings,
+    TogglePanelMetric(PanelMetric),
     PopupClosed(Id),
 }
 
-impl cosmic::Application for SystemMonitor {
-    type Flags = ();
-    type Message = Message;
-    type Executor = cosmic::SingleThreadExecutor;
-
-    const APP_ID: &'static str = SYSTEM_MONITOR_APP_ID;
-
-    fn init(
-        core: cosmic::app::Core,
-        _flags: Self::Flags,
-    ) -> (Self, cosmic::app::Task<Self::Message>) {
-        let mut stats = SystemStats::default();
-        stats.refresh();
-
-        (
-            Self {
-                core,
-                popup: None,
-                stats,
-            },
-            cosmic::task::none(),
-        )
-    }
-
-    fn core(&self) -> &cosmic::app::Core {
-        &self.core
-    }
-
-    fn core_mut(&mut self) -> &mut cosmic::app::Core {
-        &mut self.core
-    }
-
-    fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
-        cosmic::iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick)
-    }
-
-    fn on_close_requested(&self, id: Id) -> Option<Self::Message> {
-        Some(Message::PopupClosed(id))
-    }
-
-    fn update(&mut self, message: Self::Message) -> cosmic::app::Task<Self::Message> {
-        match message {
-            Message::Tick => self.stats.refresh(),
-            Message::TogglePopup => {
-                if let Some(id) = self.popup.take() {
-                    return cosmic::iced::platform_specific::shell::commands::popup::destroy_popup(
-                        id,
-                    );
-                }
-
-                self.stats.refresh();
-                let new_id = Id::unique();
-                self.popup = Some(new_id);
-
-                let popup_settings = self.core.applet.get_popup_settings(
-                    self.core.main_window_id().unwrap(),
-                    new_id,
-                    None,
-                    None,
-                    None,
-                );
-
-                return cosmic::iced::platform_specific::shell::commands::popup::get_popup(
-                    popup_settings,
-                );
-            }
-            Message::PopupClosed(id) => {
-                if self.popup.as_ref() == Some(&id) {
-                    self.popup = None;
-                }
-            }
+impl SystemMonitor {
+    fn toggle_popup(&mut self, kind: PopupKind) -> cosmic::app::Task<Message> {
+        if let Some(id) = self.popup.take() {
+            return cosmic::iced::platform_specific::shell::commands::popup::destroy_popup(id);
         }
 
-        cosmic::task::none()
+        self.stats.refresh();
+        self.popup_kind = kind;
+        let new_id = Id::unique();
+        self.popup = Some(new_id);
+
+        let popup_settings = self.core.applet.get_popup_settings(
+            self.core.main_window_id().unwrap(),
+            new_id,
+            None,
+            None,
+            None,
+        );
+
+        cosmic::iced::platform_specific::shell::commands::popup::get_popup(popup_settings)
     }
 
-    fn view(&self) -> cosmic::Element<'_, Self::Message> {
-        let content = cosmic::widget::row::with_capacity(4)
-            .push(cosmic::widget::text::body(self.stats.cpu_panel_text()))
-            .push(cosmic::widget::text::body(self.stats.gpu_panel_text()))
-            .push(cosmic::widget::text::body(self.stats.ram_panel_text()))
-            .push(cosmic::widget::text::body(self.stats.vram_panel_text()))
-            .spacing(12);
+    fn panel_settings_view(&self) -> cosmic::Element<'_, Message> {
+        let settings = cosmic::widget::column::with_capacity(9)
+            .push(cosmic::widget::text("Panel display").size(20))
+            .push(cosmic::widget::text::caption(
+                "Choose which live metrics are shown in the COSMIC panel.",
+            ))
+            .push(panel_metric_button(
+                "CPU usage + temperature",
+                PanelMetric::Cpu,
+                self.panel_config.is_visible(PanelMetric::Cpu),
+            ))
+            .push(panel_metric_button(
+                "GPU usage + temperature",
+                PanelMetric::Gpu,
+                self.panel_config.is_visible(PanelMetric::Gpu),
+            ))
+            .push(panel_metric_button(
+                "RAM used / total",
+                PanelMetric::Ram,
+                self.panel_config.is_visible(PanelMetric::Ram),
+            ))
+            .push(panel_metric_button(
+                "Swap used / total",
+                PanelMetric::Swap,
+                self.panel_config.is_visible(PanelMetric::Swap),
+            ))
+            .push(panel_metric_button(
+                "VRAM used / total",
+                PanelMetric::Vram,
+                self.panel_config.is_visible(PanelMetric::Vram),
+            ))
+            .push(panel_metric_button(
+                "Network download / upload",
+                PanelMetric::Network,
+                self.panel_config.is_visible(PanelMetric::Network),
+            ))
+            .push(cosmic::widget::text::caption(
+                "Left-click the applet for the detailed dashboard. Right-click here again to close.",
+            ))
+            .spacing(8)
+            .width(Length::Fixed(POPUP_WIDTH));
 
-        let button = cosmic::widget::button::custom(content)
-            .class(cosmic::theme::Button::AppletIcon)
-            .on_press_down(Message::TogglePopup);
-
-        cosmic::widget::autosize::autosize(button, cosmic::widget::Id::unique()).into()
+        self.core.applet.popup_container(settings).into()
     }
 
-    fn view_window(&self, _id: Id) -> cosmic::Element<'_, Self::Message> {
-        let summary = cosmic::widget::column::with_capacity(4)
+    fn dashboard_view(&self) -> cosmic::Element<'_, Message> {
+        let summary = cosmic::widget::column::with_capacity(5)
             .push(cosmic::widget::text("Tihulu System Monitor").size(20))
             .push(cosmic::widget::text::caption(
                 "Live hardware dashboard · 1 s refresh · last 60 samples",
@@ -147,12 +136,25 @@ impl cosmic::Application for SystemMonitor {
             .push(
                 cosmic::widget::row::with_capacity(2)
                     .push(summary_cell("RAM", self.stats.ram_percent_text()))
+                    .push(summary_cell("Swap", self.stats.swap_percent_text()))
+                    .spacing(16),
+            )
+            .push(
+                cosmic::widget::row::with_capacity(2)
                     .push(summary_cell("VRAM", self.stats.vram_percent_text()))
+                    .push(summary_cell(
+                        "Network",
+                        format!(
+                            "↓ {}  ↑ {}",
+                            self.stats.network_download_text(),
+                            self.stats.network_upload_text()
+                        ),
+                    ))
                     .spacing(16),
             )
             .spacing(8);
 
-        let history = cosmic::widget::column::with_capacity(9)
+        let history = cosmic::widget::column::with_capacity(10)
             .push(section_title("60-second history"))
             .push(graph_card(
                 "CPU usage",
@@ -178,6 +180,11 @@ impl cosmic::Application for SystemMonitor {
                 "RAM",
                 self.stats.ram_percent_text(),
                 self.stats.ram_graph(),
+            ))
+            .push(graph_card(
+                "Swap",
+                self.stats.swap_percent_text(),
+                self.stats.swap_graph(),
             ))
             .push(graph_card(
                 "VRAM",
@@ -271,10 +278,132 @@ impl cosmic::Application for SystemMonitor {
 
         self.core.applet.popup_container(scroll).into()
     }
+}
+
+impl cosmic::Application for SystemMonitor {
+    type Flags = ();
+    type Message = Message;
+    type Executor = cosmic::SingleThreadExecutor;
+
+    const APP_ID: &'static str = SYSTEM_MONITOR_APP_ID;
+
+    fn init(
+        core: cosmic::app::Core,
+        _flags: Self::Flags,
+    ) -> (Self, cosmic::app::Task<Self::Message>) {
+        let mut stats = SystemStats::default();
+        stats.refresh();
+
+        (
+            Self {
+                core,
+                popup: None,
+                popup_kind: PopupKind::Dashboard,
+                panel_config: PanelConfig::load(),
+                stats,
+            },
+            cosmic::task::none(),
+        )
+    }
+
+    fn core(&self) -> &cosmic::app::Core {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut cosmic::app::Core {
+        &mut self.core
+    }
+
+    fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
+        cosmic::iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick)
+    }
+
+    fn on_close_requested(&self, id: Id) -> Option<Self::Message> {
+        Some(Message::PopupClosed(id))
+    }
+
+    fn update(&mut self, message: Self::Message) -> cosmic::app::Task<Self::Message> {
+        match message {
+            Message::Tick => self.stats.refresh(),
+            Message::ToggleDashboard => return self.toggle_popup(PopupKind::Dashboard),
+            Message::OpenPanelSettings => return self.toggle_popup(PopupKind::PanelSettings),
+            Message::TogglePanelMetric(metric) => {
+                self.panel_config.toggle(metric);
+                self.panel_config.save();
+            }
+            Message::PopupClosed(id) => {
+                if self.popup.as_ref() == Some(&id) {
+                    self.popup = None;
+                }
+            }
+        }
+
+        cosmic::task::none()
+    }
+
+    fn view(&self) -> cosmic::Element<'_, Self::Message> {
+        let mut content = cosmic::widget::row::with_capacity(6).spacing(12);
+
+        if self.panel_config.show_cpu {
+            content = content.push(cosmic::widget::text::body(self.stats.cpu_panel_text()));
+        }
+        if self.panel_config.show_gpu {
+            content = content.push(cosmic::widget::text::body(self.stats.gpu_panel_text()));
+        }
+        if self.panel_config.show_ram {
+            content = content.push(cosmic::widget::text::body(self.stats.ram_panel_text()));
+        }
+        if self.panel_config.show_swap {
+            content = content.push(cosmic::widget::text::body(self.stats.swap_panel_text()));
+        }
+        if self.panel_config.show_vram {
+            content = content.push(cosmic::widget::text::body(self.stats.vram_panel_text()));
+        }
+        if self.panel_config.show_network {
+            content = content.push(cosmic::widget::text::body(self.stats.network_panel_text()));
+        }
+        if self.panel_config.visible_count() == 0 {
+            content = content.push(cosmic::widget::text::body("SYS"));
+        }
+
+        let button = cosmic::widget::button::custom(content)
+            .class(cosmic::theme::Button::AppletIcon)
+            .on_press_down(Message::ToggleDashboard);
+
+        let interactive = mouse_area(button).on_right_release(Message::OpenPanelSettings);
+
+        cosmic::widget::autosize::autosize(interactive, cosmic::widget::Id::unique()).into()
+    }
+
+    fn view_window(&self, _id: Id) -> cosmic::Element<'_, Self::Message> {
+        match self.popup_kind {
+            PopupKind::Dashboard => self.dashboard_view(),
+            PopupKind::PanelSettings => self.panel_settings_view(),
+        }
+    }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
         Some(cosmic::applet::style())
     }
+}
+
+fn panel_metric_button<'a>(
+    label: &'a str,
+    metric: PanelMetric,
+    visible: bool,
+) -> cosmic::Element<'a, Message> {
+    let marker = if visible { "✓" } else { "○" };
+    let content = cosmic::widget::row::with_capacity(3)
+        .push(cosmic::widget::text::body(marker))
+        .push(cosmic::widget::text::body(label))
+        .push(cosmic::widget::space::horizontal())
+        .spacing(8)
+        .width(Length::Fill);
+
+    cosmic::widget::button::custom(content)
+        .on_press(Message::TogglePanelMetric(metric))
+        .width(Length::Fill)
+        .into()
 }
 
 fn summary_cell<'a>(label: &'a str, value: String) -> cosmic::Element<'a, Message> {
