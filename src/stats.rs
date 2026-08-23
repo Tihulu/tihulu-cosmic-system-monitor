@@ -9,7 +9,7 @@ mod network;
 use std::collections::VecDeque;
 
 use cpu::{CpuSample, cpu_usage_between, read_cpu_frequency_mhz, read_cpu_info, read_cpu_samples, read_cpu_temperature, read_load_average, read_uptime_seconds};
-use display::{format_memory, format_memory_long, format_percent, format_rate, format_temperature, format_uptime, line_svg_auto, line_svg_fixed, percent_of, push_optional, usage_bar};
+use display::{format_memory, format_memory_long, format_percent, format_rate, format_temperature, format_uptime, percent_of, push_optional, line_svg_auto, line_svg_fixed, usage_bar};
 use gpu::{GpuSample, query_drm_gpu, query_nvidia_smi};
 use memory::read_memory;
 use network::{NetworkSample, read_network_totals};
@@ -142,8 +142,10 @@ impl SystemStats {
         push_optional(&mut self.cpu_temp_history, self.cpu_temperature_c);
         push_optional(&mut self.gpu_usage_history, self.gpu_usage_percent);
         push_optional(&mut self.gpu_temp_history, self.gpu_temperature_c);
-        push_optional(&mut self.ram_history, self.ram_percent());
-        push_optional(&mut self.vram_history, self.vram_percent());
+        let ram_percent = self.ram_percent();
+        let vram_percent = self.vram_percent();
+        push_optional(&mut self.ram_history, ram_percent);
+        push_optional(&mut self.vram_history, vram_percent);
         push_optional(&mut self.network_rx_history, self.network_rx_bytes_per_sec.map(|v| v / MIB as f64));
         push_optional(&mut self.network_tx_history, self.network_tx_bytes_per_sec.map(|v| v / MIB as f64));
     }
