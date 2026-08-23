@@ -1,435 +1,215 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+mod cpu;
+mod display;
+mod gpu;
+mod memory;
+mod network;
 
-const KIB: u64 = 1024;
-const MIB: u64 = 1024 * KIB;
-const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+use std::collections::VecDeque;
 
-#[derive(Debug, Clone, Copy, Default)]
-struct CpuSample {
-    idle: u64,
-    total: u64,
-}
+use cpu::{CpuSample, cpu_usage_between, read_cpu_frequency_mhz, read_cpu_info, read_cpu_samples, read_cpu_temperature, read_load_average, read_uptime_seconds};
+use display::{format_memory, format_memory_long, format_percent, format_rate, format_temperature, format_uptime, percent_of, push_optional, sparkline_auto, sparkline_fixed, usage_bar};
+use gpu::{GpuSample, query_drm_gpu, query_nvidia_smi};
+use memory::read_memory;
+use network::{NetworkSample, read_network_totals};
 
-#[derive(Debug, Clone, Copy, Default)]
-struct GpuSample {
-    usage_percent: Option<f64>,
-    temperature_c: Option<f64>,
-    vram_used_bytes: Option<u64>,
-    vram_total_bytes: Option<u64>,
-}
+pub(super) const KIB: u64 = 1024;
+pub(super) const MIB: u64 = 1024 * KIB;
+pub(super) const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+pub(super) const HISTORY_LEN: usize = 60;
 
 #[derive(Debug, Default)]
 pub(crate) struct SystemStats {
     previous_cpu: Option<CpuSample>,
+    previous_cores: Vec<CpuSample>,
+    previous_network: Option<NetworkSample>,
+
     cpu_usage_percent: Option<f64>,
     cpu_temperature_c: Option<f64>,
+    core_usage_percent: Vec<f64>,
+    cpu_frequency_mhz: Option<f64>,
+    cpu_model: Option<String>,
+    cpu_logical_cores: Option<usize>,
+    cpu_physical_cores: Option<usize>,
+    load_average: Option<(f64, f64, f64)>,
+    uptime_seconds: Option<f64>,
+
     gpu_usage_percent: Option<f64>,
     gpu_temperature_c: Option<f64>,
-    ram_used_bytes: Option<u64>,
-    ram_total_bytes: Option<u64>,
     vram_used_bytes: Option<u64>,
     vram_total_bytes: Option<u64>,
+    gpu_name: Option<String>,
+    gpu_driver_version: Option<String>,
+    gpu_power_draw_w: Option<f64>,
+    gpu_power_limit_w: Option<f64>,
+    gpu_graphics_clock_mhz: Option<f64>,
+    gpu_memory_clock_mhz: Option<f64>,
+
+    ram_used_bytes: Option<u64>,
+    ram_total_bytes: Option<u64>,
+    swap_used_bytes: Option<u64>,
+    swap_total_bytes: Option<u64>,
+
+    network_rx_bytes_per_sec: Option<f64>,
+    network_tx_bytes_per_sec: Option<f64>,
+    network_interfaces: Vec<String>,
+
+    cpu_usage_history: VecDeque<f64>,
+    cpu_temp_history: VecDeque<f64>,
+    gpu_usage_history: VecDeque<f64>,
+    gpu_temp_history: VecDeque<f64>,
+    ram_history: VecDeque<f64>,
+    vram_history: VecDeque<f64>,
+    network_rx_history: VecDeque<f64>,
+    network_tx_history: VecDeque<f64>,
 }
 
 impl SystemStats {
     pub(crate) fn refresh(&mut self) {
-        if let Some(current) = read_cpu_sample() {
-            self.cpu_usage_percent = self
-                .previous_cpu
-                .and_then(|previous| cpu_usage_between(previous, current));
-            self.previous_cpu = Some(current);
-        }
-
+        self.refresh_cpu();
         self.cpu_temperature_c = read_cpu_temperature();
+        self.cpu_frequency_mhz = read_cpu_frequency_mhz();
+        self.load_average = read_load_average();
+        self.uptime_seconds = read_uptime_seconds();
+        self.ensure_cpu_info();
 
-        if let Some((used, total)) = read_memory() {
-            self.ram_used_bytes = Some(used);
-            self.ram_total_bytes = Some(total);
+        if let Some(memory) = read_memory() {
+            self.ram_used_bytes = Some(memory.ram_used_bytes);
+            self.ram_total_bytes = Some(memory.ram_total_bytes);
+            self.swap_used_bytes = Some(memory.swap_used_bytes);
+            self.swap_total_bytes = Some(memory.swap_total_bytes);
         }
 
-        let gpu = query_nvidia_smi().unwrap_or_else(query_drm_gpu);
+        self.apply_gpu(query_nvidia_smi().unwrap_or_else(query_drm_gpu));
+        self.refresh_network();
+        self.record_history();
+    }
+
+    fn refresh_cpu(&mut self) {
+        let Some(samples) = read_cpu_samples() else { return };
+        let Some((&current, cores)) = samples.split_first() else { return };
+
+        self.cpu_usage_percent = self.previous_cpu.and_then(|p| cpu_usage_between(p, current));
+        self.previous_cpu = Some(current);
+
+        self.core_usage_percent = if self.previous_cores.len() == cores.len() {
+            self.previous_cores.iter().copied().zip(cores.iter().copied())
+                .map(|(p, c)| cpu_usage_between(p, c).unwrap_or(0.0)).collect()
+        } else {
+            vec![0.0; cores.len()]
+        };
+        self.previous_cores = cores.to_vec();
+    }
+
+    fn ensure_cpu_info(&mut self) {
+        if self.cpu_model.is_some() { return; }
+        if let Some((model, logical, physical)) = read_cpu_info() {
+            self.cpu_model = Some(model);
+            self.cpu_logical_cores = Some(logical);
+            self.cpu_physical_cores = physical;
+        }
+    }
+
+    fn apply_gpu(&mut self, gpu: GpuSample) {
         self.gpu_usage_percent = gpu.usage_percent;
         self.gpu_temperature_c = gpu.temperature_c;
         self.vram_used_bytes = gpu.vram_used_bytes;
         self.vram_total_bytes = gpu.vram_total_bytes;
+        if gpu.name.is_some() { self.gpu_name = gpu.name; }
+        if gpu.driver_version.is_some() { self.gpu_driver_version = gpu.driver_version; }
+        self.gpu_power_draw_w = gpu.power_draw_w;
+        self.gpu_power_limit_w = gpu.power_limit_w;
+        self.gpu_graphics_clock_mhz = gpu.graphics_clock_mhz;
+        self.gpu_memory_clock_mhz = gpu.memory_clock_mhz;
     }
 
-    pub(crate) fn cpu_panel_text(&self) -> String {
-        format!(
-            "CPU {} {}",
-            format_percent(self.cpu_usage_percent),
-            format_temperature(self.cpu_temperature_c)
-        )
-    }
-
-    pub(crate) fn gpu_panel_text(&self) -> String {
-        format!(
-            "GPU {} {}",
-            format_percent(self.gpu_usage_percent),
-            format_temperature(self.gpu_temperature_c)
-        )
-    }
-
-    pub(crate) fn ram_panel_text(&self) -> String {
-        format_memory_panel("RAM", self.ram_used_bytes, self.ram_total_bytes)
-    }
-
-    pub(crate) fn vram_panel_text(&self) -> String {
-        format_memory_panel("VRAM", self.vram_used_bytes, self.vram_total_bytes)
-    }
-
-    pub(crate) fn cpu_usage_text(&self) -> String {
-        format_percent(self.cpu_usage_percent).trim().to_string()
-    }
-
-    pub(crate) fn cpu_temperature_text(&self) -> String {
-        format_temperature(self.cpu_temperature_c)
-    }
-
-    pub(crate) fn gpu_usage_text(&self) -> String {
-        format_percent(self.gpu_usage_percent).trim().to_string()
-    }
-
-    pub(crate) fn gpu_temperature_text(&self) -> String {
-        format_temperature(self.gpu_temperature_c)
-    }
-
-    pub(crate) fn ram_usage_text(&self) -> String {
-        format_memory_detail(self.ram_used_bytes, self.ram_total_bytes)
-    }
-
-    pub(crate) fn vram_usage_text(&self) -> String {
-        format_memory_detail(self.vram_used_bytes, self.vram_total_bytes)
-    }
-}
-
-fn read_cpu_sample() -> Option<CpuSample> {
-    let contents = fs::read_to_string("/proc/stat").ok()?;
-    parse_cpu_sample(&contents)
-}
-
-fn parse_cpu_sample(contents: &str) -> Option<CpuSample> {
-    let line = contents.lines().find(|line| line.starts_with("cpu "))?;
-    let values = line
-        .split_whitespace()
-        .skip(1)
-        .map(str::parse::<u64>)
-        .collect::<Result<Vec<_>, _>>()
-        .ok()?;
-
-    if values.len() < 4 {
-        return None;
-    }
-
-    let idle = values.get(3).copied().unwrap_or(0) + values.get(4).copied().unwrap_or(0);
-    let total = values.iter().take(8).copied().sum();
-    Some(CpuSample { idle, total })
-}
-
-fn cpu_usage_between(previous: CpuSample, current: CpuSample) -> Option<f64> {
-    let total_delta = current.total.checked_sub(previous.total)?;
-    let idle_delta = current.idle.checked_sub(previous.idle)?;
-
-    if total_delta == 0 {
-        return None;
-    }
-
-    let busy = total_delta.saturating_sub(idle_delta);
-    Some((busy as f64 * 100.0 / total_delta as f64).clamp(0.0, 100.0))
-}
-
-fn read_memory() -> Option<(u64, u64)> {
-    let contents = fs::read_to_string("/proc/meminfo").ok()?;
-    parse_memory(&contents)
-}
-
-fn parse_memory(contents: &str) -> Option<(u64, u64)> {
-    let mut total_kib = None;
-    let mut available_kib = None;
-
-    for line in contents.lines() {
-        if let Some(value) = line.strip_prefix("MemTotal:") {
-            total_kib = value.split_whitespace().next()?.parse::<u64>().ok();
-        } else if let Some(value) = line.strip_prefix("MemAvailable:") {
-            available_kib = value.split_whitespace().next()?.parse::<u64>().ok();
-        }
-    }
-
-    let total = total_kib?.saturating_mul(KIB);
-    let available = available_kib?.saturating_mul(KIB);
-    Some((total.saturating_sub(available), total))
-}
-
-fn read_cpu_temperature() -> Option<f64> {
-    let mut preferred = Vec::new();
-    let mut labelled = Vec::new();
-
-    if let Ok(entries) = fs::read_dir("/sys/class/hwmon") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = fs::read_to_string(path.join("name"))
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase();
-
-            let cpu_hwmon = matches!(
-                name.as_str(),
-                "coretemp" | "k10temp" | "zenpower" | "cpu_thermal" | "x86_pkg_temp"
-            );
-
-            for sensor in hwmon_temperature_inputs(&path) {
-                let Some(value) = read_temperature_file(&sensor) else {
-                    continue;
-                };
-                let Some(file_name) = sensor.file_name() else {
-                    continue;
-                };
-                let label_path = sensor.with_file_name(
-                    file_name.to_string_lossy().replace("_input", "_label"),
-                );
-                let label = fs::read_to_string(label_path)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_ascii_lowercase();
-
-                if cpu_hwmon {
-                    preferred.push(value);
-                } else if ["package", "tctl", "tdie", "cpu"]
-                    .iter()
-                    .any(|needle| label.contains(needle))
-                {
-                    labelled.push(value);
-                }
+    fn refresh_network(&mut self) {
+        let Some((rx_bytes, tx_bytes, interfaces)) = read_network_totals() else { return };
+        self.network_interfaces = interfaces;
+        let current = NetworkSample::now(rx_bytes, tx_bytes);
+        if let Some(previous) = &self.previous_network {
+            if let Some((rx, tx)) = current.rates_since(previous) {
+                self.network_rx_bytes_per_sec = Some(rx);
+                self.network_tx_bytes_per_sec = Some(tx);
             }
         }
+        self.previous_network = Some(current);
     }
 
-    preferred
-        .into_iter()
-        .chain(labelled)
-        .filter(|temperature| (0.0..=125.0).contains(temperature))
-        .max_by(f64::total_cmp)
-        .or_else(read_thermal_zone_cpu_temperature)
-}
-
-fn hwmon_temperature_inputs(path: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(path) else {
-        return Vec::new();
-    };
-
-    entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .map(|name| {
-                    let name = name.to_string_lossy();
-                    name.starts_with("temp") && name.ends_with("_input")
-                })
-                .unwrap_or(false)
-        })
-        .collect()
-}
-
-fn read_thermal_zone_cpu_temperature() -> Option<f64> {
-    let entries = fs::read_dir("/sys/class/thermal").ok()?;
-    entries.flatten().find_map(|entry| {
-        let path = entry.path();
-        let zone_type = fs::read_to_string(path.join("type"))
-            .ok()?
-            .trim()
-            .to_ascii_lowercase();
-
-        if ["x86_pkg_temp", "cpu", "cpu-thermal", "soc_thermal"]
-            .iter()
-            .any(|needle| zone_type.contains(needle))
-        {
-            read_temperature_file(&path.join("temp"))
-        } else {
-            None
-        }
-    })
-}
-
-fn read_temperature_file(path: &Path) -> Option<f64> {
-    let raw = fs::read_to_string(path).ok()?.trim().parse::<f64>().ok()?;
-    let celsius = if raw.abs() > 1000.0 { raw / 1000.0 } else { raw };
-    (celsius.is_finite() && (-20.0..=150.0).contains(&celsius)).then_some(celsius)
-}
-
-fn query_nvidia_smi() -> Option<GpuSample> {
-    let output = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total",
-            "--format=csv,noheader,nounits",
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
+    fn record_history(&mut self) {
+        push_optional(&mut self.cpu_usage_history, self.cpu_usage_percent);
+        push_optional(&mut self.cpu_temp_history, self.cpu_temperature_c);
+        push_optional(&mut self.gpu_usage_history, self.gpu_usage_percent);
+        push_optional(&mut self.gpu_temp_history, self.gpu_temperature_c);
+        push_optional(&mut self.ram_history, self.ram_percent());
+        push_optional(&mut self.vram_history, self.vram_percent());
+        push_optional(&mut self.network_rx_history, self.network_rx_bytes_per_sec.map(|v| v / MIB as f64));
+        push_optional(&mut self.network_tx_history, self.network_tx_bytes_per_sec.map(|v| v / MIB as f64));
     }
 
-    parse_nvidia_smi(&String::from_utf8_lossy(&output.stdout))
-}
+    pub(crate) fn cpu_panel_text(&self) -> String { format!("CPU {} {}", format_percent(self.cpu_usage_percent), format_temperature(self.cpu_temperature_c)) }
+    pub(crate) fn gpu_panel_text(&self) -> String { format!("GPU {} {}", format_percent(self.gpu_usage_percent), format_temperature(self.gpu_temperature_c)) }
+    pub(crate) fn ram_panel_text(&self) -> String { format_memory("RAM", self.ram_used_bytes, self.ram_total_bytes) }
+    pub(crate) fn vram_panel_text(&self) -> String { format_memory("VRAM", self.vram_used_bytes, self.vram_total_bytes) }
 
-fn parse_nvidia_smi(contents: &str) -> Option<GpuSample> {
-    let line = contents.lines().find(|line| !line.trim().is_empty())?;
-    let fields: Vec<&str> = line.split(',').map(str::trim).collect();
-    if fields.len() < 4 {
-        return None;
+    pub(crate) fn cpu_usage_text(&self) -> String { format_percent(self.cpu_usage_percent).trim().to_string() }
+    pub(crate) fn cpu_temperature_text(&self) -> String { format_temperature(self.cpu_temperature_c) }
+    pub(crate) fn gpu_usage_text(&self) -> String { format_percent(self.gpu_usage_percent).trim().to_string() }
+    pub(crate) fn gpu_temperature_text(&self) -> String { format_temperature(self.gpu_temperature_c) }
+    pub(crate) fn ram_usage_text(&self) -> String { format_memory_long(self.ram_used_bytes, self.ram_total_bytes) }
+    pub(crate) fn vram_usage_text(&self) -> String { format_memory_long(self.vram_used_bytes, self.vram_total_bytes) }
+    pub(crate) fn swap_usage_text(&self) -> String { format_memory_long(self.swap_used_bytes, self.swap_total_bytes) }
+    pub(crate) fn ram_percent_text(&self) -> String { format_percent(self.ram_percent()).trim().to_string() }
+    pub(crate) fn vram_percent_text(&self) -> String { format_percent(self.vram_percent()).trim().to_string() }
+
+    pub(crate) fn cpu_model_text(&self) -> String { self.cpu_model.clone().unwrap_or_else(|| "Unknown CPU".into()) }
+    pub(crate) fn cpu_topology_text(&self) -> String {
+        match (self.cpu_physical_cores, self.cpu_logical_cores) {
+            (Some(p), Some(l)) => format!("{p} physical / {l} logical"),
+            (None, Some(l)) => format!("{l} logical"),
+            _ => "--".into(),
+        }
     }
+    pub(crate) fn cpu_frequency_text(&self) -> String {
+        self.cpu_frequency_mhz.map(|mhz| if mhz >= 1000.0 { format!("{:.2} GHz avg", mhz / 1000.0) } else { format!("{mhz:.0} MHz avg") }).unwrap_or_else(|| "--".into())
+    }
+    pub(crate) fn load_average_text(&self) -> String { self.load_average.map(|(a,b,c)| format!("{a:.2} / {b:.2} / {c:.2}")).unwrap_or_else(|| "--".into()) }
+    pub(crate) fn uptime_text(&self) -> String { self.uptime_seconds.map(format_uptime).unwrap_or_else(|| "--".into()) }
 
-    let parse_float = |value: &str| value.parse::<f64>().ok();
-    let parse_mib = |value: &str| {
-        value
-            .parse::<f64>()
-            .ok()
-            .filter(|value| *value >= 0.0)
-            .map(|value| (value * MIB as f64).round() as u64)
-    };
-
-    let sample = GpuSample {
-        usage_percent: parse_float(fields[0]),
-        temperature_c: parse_float(fields[1]),
-        vram_used_bytes: parse_mib(fields[2]),
-        vram_total_bytes: parse_mib(fields[3]),
-    };
-
-    (sample.usage_percent.is_some()
-        || sample.temperature_c.is_some()
-        || sample.vram_used_bytes.is_some()
-        || sample.vram_total_bytes.is_some())
-        .then_some(sample)
-}
-
-fn query_drm_gpu() -> GpuSample {
-    let Ok(entries) = fs::read_dir("/sys/class/drm") else {
-        return GpuSample::default();
-    };
-
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        if !name.to_string_lossy().starts_with("card") {
-            continue;
+    pub(crate) fn gpu_name_text(&self) -> String { self.gpu_name.clone().unwrap_or_else(|| "Unknown GPU".into()) }
+    pub(crate) fn gpu_driver_text(&self) -> String { self.gpu_driver_version.clone().unwrap_or_else(|| "--".into()) }
+    pub(crate) fn gpu_power_text(&self) -> String {
+        match (self.gpu_power_draw_w, self.gpu_power_limit_w) {
+            (Some(d), Some(l)) => format!("{d:.1} / {l:.0} W"),
+            (Some(d), None) => format!("{d:.1} W"),
+            _ => "--".into(),
         }
-
-        let device = entry.path().join("device");
-        if !device.exists() {
-            continue;
-        }
-
-        let usage_percent = read_number(device.join("gpu_busy_percent"));
-        let vram_used_bytes = read_u64(device.join("mem_info_vram_used"));
-        let vram_total_bytes = read_u64(device.join("mem_info_vram_total"));
-        let temperature_c = read_drm_gpu_temperature(&device);
-
-        if usage_percent.is_some()
-            || temperature_c.is_some()
-            || vram_used_bytes.is_some()
-            || vram_total_bytes.is_some()
-        {
-            return GpuSample {
-                usage_percent,
-                temperature_c,
-                vram_used_bytes,
-                vram_total_bytes,
-            };
+    }
+    pub(crate) fn gpu_clocks_text(&self) -> String {
+        match (self.gpu_graphics_clock_mhz, self.gpu_memory_clock_mhz) {
+            (Some(g), Some(m)) => format!("core {g:.0} MHz / memory {m:.0} MHz"),
+            (Some(g), None) => format!("core {g:.0} MHz"),
+            _ => "--".into(),
         }
     }
 
-    GpuSample::default()
-}
+    pub(crate) fn network_download_text(&self) -> String { format_rate(self.network_rx_bytes_per_sec) }
+    pub(crate) fn network_upload_text(&self) -> String { format_rate(self.network_tx_bytes_per_sec) }
+    pub(crate) fn network_interfaces_text(&self) -> String { if self.network_interfaces.is_empty() { "--".into() } else { self.network_interfaces.join(", ") } }
 
-fn read_drm_gpu_temperature(device: &Path) -> Option<f64> {
-    let hwmon_root = device.join("hwmon");
-    let entries = fs::read_dir(hwmon_root).ok()?;
+    pub(crate) fn cpu_usage_graph(&self) -> String { sparkline_fixed(&self.cpu_usage_history, 100.0) }
+    pub(crate) fn cpu_temperature_graph(&self) -> String { sparkline_auto(&self.cpu_temp_history) }
+    pub(crate) fn gpu_usage_graph(&self) -> String { sparkline_fixed(&self.gpu_usage_history, 100.0) }
+    pub(crate) fn gpu_temperature_graph(&self) -> String { sparkline_auto(&self.gpu_temp_history) }
+    pub(crate) fn ram_graph(&self) -> String { sparkline_fixed(&self.ram_history, 100.0) }
+    pub(crate) fn vram_graph(&self) -> String { sparkline_fixed(&self.vram_history, 100.0) }
+    pub(crate) fn network_download_graph(&self) -> String { sparkline_auto(&self.network_rx_history) }
+    pub(crate) fn network_upload_graph(&self) -> String { sparkline_auto(&self.network_tx_history) }
 
-    entries.flatten().find_map(|entry| {
-        hwmon_temperature_inputs(&entry.path())
-            .into_iter()
-            .filter_map(|path| read_temperature_file(&path))
-            .max_by(f64::total_cmp)
-    })
-}
+    pub(crate) fn core_usage(&self) -> &[f64] { &self.core_usage_percent }
+    pub(crate) fn core_usage_line(index: usize, usage: f64) -> String { format!("Core {index:02}  {usage:>5.1}%  {}", usage_bar(usage, 12)) }
 
-fn read_number(path: PathBuf) -> Option<f64> {
-    fs::read_to_string(path).ok()?.trim().parse::<f64>().ok()
-}
-
-fn read_u64(path: PathBuf) -> Option<u64> {
-    fs::read_to_string(path).ok()?.trim().parse::<u64>().ok()
-}
-
-fn format_percent(value: Option<f64>) -> String {
-    value
-        .filter(|value| value.is_finite())
-        .map(|value| format!("{:>3.0}%", value.clamp(0.0, 100.0)))
-        .unwrap_or_else(|| " --%".to_string())
-}
-
-fn format_temperature(value: Option<f64>) -> String {
-    value
-        .filter(|value| value.is_finite())
-        .map(|value| format!("{value:.0}°C"))
-        .unwrap_or_else(|| "--°C".to_string())
-}
-
-fn format_memory_panel(label: &str, used: Option<u64>, total: Option<u64>) -> String {
-    match (used, total) {
-        (Some(used), Some(total)) if total > 0 => {
-            format!("{label} {:.1}/{:.1}G", used as f64 / GIB, total as f64 / GIB)
-        }
-        _ => format!("{label} --/--G"),
-    }
-}
-
-fn format_memory_detail(used: Option<u64>, total: Option<u64>) -> String {
-    match (used, total) {
-        (Some(used), Some(total)) if total > 0 => format!(
-            "{:.1} / {:.1} GiB ({:.0}%)",
-            used as f64 / GIB,
-            total as f64 / GIB,
-            used as f64 * 100.0 / total as f64
-        ),
-        _ => "-- / -- GiB".to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_cpu_sample_and_usage() {
-        let first = parse_cpu_sample("cpu  100 20 30 850 10 0 0 0 0 0\n").unwrap();
-        let second = parse_cpu_sample("cpu  150 20 50 880 10 0 0 0 0 0\n").unwrap();
-        let usage = cpu_usage_between(first, second).unwrap();
-        assert!((usage - 70.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn parses_meminfo() {
-        let (used, total) = parse_memory(
-            "MemTotal:       1000000 kB\nMemFree: 1000 kB\nMemAvailable:    250000 kB\n",
-        )
-        .unwrap();
-        assert_eq!(total, 1_000_000 * KIB);
-        assert_eq!(used, 750_000 * KIB);
-    }
-
-    #[test]
-    fn parses_nvidia_smi_line() {
-        let sample = parse_nvidia_smi("42, 57, 2048, 16384\n").unwrap();
-        assert_eq!(sample.usage_percent, Some(42.0));
-        assert_eq!(sample.temperature_c, Some(57.0));
-        assert_eq!(sample.vram_used_bytes, Some(2048 * MIB));
-        assert_eq!(sample.vram_total_bytes, Some(16384 * MIB));
-    }
+    fn ram_percent(&self) -> Option<f64> { percent_of(self.ram_used_bytes, self.ram_total_bytes) }
+    fn vram_percent(&self) -> Option<f64> { percent_of(self.vram_used_bytes, self.vram_total_bytes) }
 }
