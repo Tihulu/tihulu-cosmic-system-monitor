@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt::Write};
 use super::{GIB, HISTORY_LEN, KIB, MIB};
 
-const SPARKLINE_WIDTH: usize = 52;
+const GRAPH_WIDTH: f64 = 520.0;
+const GRAPH_HEIGHT: f64 = 72.0;
+const GRAPH_PADDING: f64 = 3.0;
 
 pub(super) fn push_optional(history: &mut VecDeque<f64>, value: Option<f64>) {
     let Some(value) = value.filter(|v| v.is_finite()) else { return };
@@ -11,22 +13,65 @@ pub(super) fn push_optional(history: &mut VecDeque<f64>, value: Option<f64>) {
     while history.len() > HISTORY_LEN { history.pop_front(); }
 }
 
-pub(super) fn sparkline_fixed(samples: &VecDeque<f64>, max: f64) -> String { sparkline(samples, 0.0, max.max(1.0)) }
-pub(super) fn sparkline_auto(samples: &VecDeque<f64>) -> String {
-    if samples.is_empty() { return "--".into(); }
-    let (mut min, mut max)=(f64::INFINITY, f64::NEG_INFINITY);
-    for v in samples { min=min.min(*v); max=max.max(*v); }
-    if (max-min).abs() < f64::EPSILON { min=0.0; max=max.max(1.0); }
-    sparkline(samples,min,max)
+pub(super) fn line_svg_fixed(samples: &VecDeque<f64>, max: f64) -> String {
+    line_svg(samples, 0.0, max.max(1.0))
 }
-fn sparkline(samples: &VecDeque<f64>, min: f64, max: f64) -> String {
-    const LEVELS:[char;8]=['▁','▂','▃','▄','▅','▆','▇','█'];
-    if samples.is_empty() || max <= min { return "--".into(); }
-    let start=samples.len().saturating_sub(SPARKLINE_WIDTH);
-    samples.iter().skip(start).map(|v| {
-        let n=((*v-min)/(max-min)).clamp(0.0,1.0);
-        LEVELS[(n*7.0).round() as usize]
-    }).collect()
+
+pub(super) fn line_svg_auto(samples: &VecDeque<f64>) -> String {
+    if samples.is_empty() { return empty_svg(); }
+    let (mut min, mut max) = (f64::INFINITY, f64::NEG_INFINITY);
+    for value in samples {
+        min = min.min(*value);
+        max = max.max(*value);
+    }
+    if (max - min).abs() < f64::EPSILON {
+        min = 0.0;
+        max = max.max(1.0);
+    } else {
+        let margin = (max - min) * 0.12;
+        min = (min - margin).max(0.0);
+        max += margin;
+    }
+    line_svg(samples, min, max)
+}
+
+fn line_svg(samples: &VecDeque<f64>, min: f64, max: f64) -> String {
+    if samples.is_empty() || max <= min { return empty_svg(); }
+
+    let start = samples.len().saturating_sub(HISTORY_LEN);
+    let values: Vec<f64> = samples.iter().skip(start).copied().collect();
+    let drawable_w = GRAPH_WIDTH - 2.0 * GRAPH_PADDING;
+    let drawable_h = GRAPH_HEIGHT - 2.0 * GRAPH_PADDING;
+    let step_x = if values.len() > 1 { drawable_w / (values.len() - 1) as f64 } else { 0.0 };
+
+    let mut points = String::with_capacity(values.len() * 14);
+    for (index, value) in values.iter().enumerate() {
+        let x = GRAPH_PADDING + index as f64 * step_x;
+        let normalized = ((*value - min) / (max - min)).clamp(0.0, 1.0);
+        let y = GRAPH_PADDING + (1.0 - normalized) * drawable_h;
+        if index > 0 { points.push(' '); }
+        let _ = write!(&mut points, "{x:.1},{y:.1}");
+    }
+
+    let last_value = *values.last().unwrap_or(&min);
+    let last_normalized = ((last_value - min) / (max - min)).clamp(0.0, 1.0);
+    let last_x = GRAPH_PADDING + (values.len().saturating_sub(1)) as f64 * step_x;
+    let last_y = GRAPH_PADDING + (1.0 - last_normalized) * drawable_h;
+
+    format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {GRAPH_WIDTH} {GRAPH_HEIGHT}" preserveAspectRatio="none">
+<g fill="none" stroke="currentColor">
+  <path d="M3 18 H517 M3 36 H517 M3 54 H517" opacity="0.14" stroke-width="1"/>
+  <polyline points="{points}" opacity="0.22" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="{points}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<circle cx="{last_x:.1}" cy="{last_y:.1}" r="2.6" fill="currentColor"/>
+</svg>"#)
+}
+
+fn empty_svg() -> String {
+    format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {GRAPH_WIDTH} {GRAPH_HEIGHT}" preserveAspectRatio="none">
+<path d="M3 36 H517" fill="none" stroke="currentColor" opacity="0.18" stroke-width="1"/>
+</svg>"#)
 }
 
 pub(super) fn usage_bar(value:f64,width:usize)->String {
@@ -61,4 +106,13 @@ pub(super) fn format_uptime(seconds:f64)->String {
 }
 
 #[cfg(test)]
-mod tests { use super::*; #[test] fn spark(){ let s=VecDeque::from(vec![0.0,25.0,50.0,75.0,100.0]); assert_eq!(sparkline_fixed(&s,100.0).chars().count(),5); } }
+mod tests {
+    use super::*;
+    #[test]
+    fn svg_contains_points() {
+        let samples=VecDeque::from(vec![0.0,25.0,50.0,75.0,100.0]);
+        let svg=line_svg_fixed(&samples,100.0);
+        assert!(svg.contains("polyline"));
+        assert!(svg.contains("circle"));
+    }
+}
