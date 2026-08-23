@@ -33,12 +33,13 @@ install_apt_deps() {
         return
     fi
 
-    log "Installing build dependencies"
+    log "Installing build and runtime dependencies"
     sudo apt-get update
     sudo apt-get install -y \
         build-essential \
         cmake \
         curl \
+        dmidecode \
         git \
         libegl1-mesa-dev \
         libexpat1-dev \
