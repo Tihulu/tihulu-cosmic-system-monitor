@@ -9,7 +9,7 @@ mod network;
 use std::collections::VecDeque;
 
 use cpu::{CpuSample, cpu_usage_between, read_cpu_frequency_mhz, read_cpu_info, read_cpu_samples, read_cpu_temperature, read_load_average, read_uptime_seconds};
-use display::{format_memory, format_memory_long, format_percent, format_rate, format_temperature, format_uptime, percent_of, push_optional, sparkline_auto, sparkline_fixed, usage_bar};
+use display::{format_memory, format_memory_long, format_percent, format_rate, format_temperature, format_uptime, line_svg_auto, line_svg_fixed, percent_of, push_optional, usage_bar};
 use gpu::{GpuSample, query_drm_gpu, query_nvidia_smi};
 use memory::read_memory;
 use network::{NetworkSample, read_network_totals};
@@ -198,14 +198,14 @@ impl SystemStats {
     pub(crate) fn network_upload_text(&self) -> String { format_rate(self.network_tx_bytes_per_sec) }
     pub(crate) fn network_interfaces_text(&self) -> String { if self.network_interfaces.is_empty() { "--".into() } else { self.network_interfaces.join(", ") } }
 
-    pub(crate) fn cpu_usage_graph(&self) -> String { sparkline_fixed(&self.cpu_usage_history, 100.0) }
-    pub(crate) fn cpu_temperature_graph(&self) -> String { sparkline_auto(&self.cpu_temp_history) }
-    pub(crate) fn gpu_usage_graph(&self) -> String { sparkline_fixed(&self.gpu_usage_history, 100.0) }
-    pub(crate) fn gpu_temperature_graph(&self) -> String { sparkline_auto(&self.gpu_temp_history) }
-    pub(crate) fn ram_graph(&self) -> String { sparkline_fixed(&self.ram_history, 100.0) }
-    pub(crate) fn vram_graph(&self) -> String { sparkline_fixed(&self.vram_history, 100.0) }
-    pub(crate) fn network_download_graph(&self) -> String { sparkline_auto(&self.network_rx_history) }
-    pub(crate) fn network_upload_graph(&self) -> String { sparkline_auto(&self.network_tx_history) }
+    pub(crate) fn cpu_usage_graph(&self) -> String { line_svg_fixed(&self.cpu_usage_history, 100.0) }
+    pub(crate) fn cpu_temperature_graph(&self) -> String { line_svg_auto(&self.cpu_temp_history) }
+    pub(crate) fn gpu_usage_graph(&self) -> String { line_svg_fixed(&self.gpu_usage_history, 100.0) }
+    pub(crate) fn gpu_temperature_graph(&self) -> String { line_svg_auto(&self.gpu_temp_history) }
+    pub(crate) fn ram_graph(&self) -> String { line_svg_fixed(&self.ram_history, 100.0) }
+    pub(crate) fn vram_graph(&self) -> String { line_svg_fixed(&self.vram_history, 100.0) }
+    pub(crate) fn network_download_graph(&self) -> String { line_svg_auto(&self.network_rx_history) }
+    pub(crate) fn network_upload_graph(&self) -> String { line_svg_auto(&self.network_tx_history) }
 
     pub(crate) fn core_usage(&self) -> &[f64] { &self.core_usage_percent }
     pub(crate) fn core_usage_line(index: usize, usage: f64) -> String { format!("Core {index:02}  {usage:>5.1}%  {}", usage_bar(usage, 12)) }
