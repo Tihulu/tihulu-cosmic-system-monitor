@@ -1,0 +1,10 @@
+[package]
+name = "tihulu-cosmic-system-monitor"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A compact CPU, GPU, RAM and VRAM monitor applet for the COSMIC desktop."
+repository = "https://github.com/Tihulu/tihulu-cosmic-system-monitor"
+
+[dependencies]
+libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = ["applet"] }
