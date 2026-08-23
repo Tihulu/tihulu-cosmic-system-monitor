@@ -10,7 +10,7 @@ use crate::{
 };
 
 const SYSTEM_MONITOR_APP_ID: &str = "io.github.tihulu.SystemMonitor";
-const POPUP_WIDTH: f32 = 330.0;
+const POPUP_WIDTH: f32 = 520.0;
 const POPUP_HEIGHT: f32 = 500.0;
 const GRAPH_HEIGHT: f32 = 56.0;
 
@@ -118,7 +118,7 @@ impl SystemMonitor {
                 self.panel_config.is_visible(PanelMetric::Network),
             ))
             .push(cosmic::widget::text::caption(
-                "Left-click opens the dashboard. Right-click again closes this menu.",
+                "Left-click the applet for the dashboard. Right-click again to close.",
             ))
             .spacing(8)
             .width(Length::Fixed(POPUP_WIDTH));
@@ -126,70 +126,27 @@ impl SystemMonitor {
         self.core.applet.popup_container(settings).into()
     }
 
-    fn dashboard_view(&self) -> cosmic::Element<'_, Message> {
-        let header = cosmic::widget::column::with_capacity(4)
+    fn dashboard_header(&self) -> cosmic::Element<'_, Message> {
+        cosmic::widget::column::with_capacity(3)
             .push(cosmic::widget::text("Tihulu System Monitor").size(20))
             .push(cosmic::widget::text::caption(
-                "Live hardware dashboard · 1 s refresh · 60 s history",
+                "Live hardware dashboard · 1 s refresh · last 60 samples",
             ))
             .push(
-                cosmic::widget::row::with_capacity(3)
-                    .push(tab_button(
-                        "Overview",
-                        DashboardTab::Overview,
-                        self.dashboard_tab == DashboardTab::Overview,
-                    ))
-                    .push(tab_button(
-                        "CPU",
-                        DashboardTab::Cpu,
-                        self.dashboard_tab == DashboardTab::Cpu,
-                    ))
-                    .push(tab_button(
-                        "GPU",
-                        DashboardTab::Gpu,
-                        self.dashboard_tab == DashboardTab::Gpu,
-                    ))
-                    .spacing(4),
+                cosmic::widget::row::with_capacity(5)
+                    .push(tab_button("Overview", DashboardTab::Overview, self.dashboard_tab))
+                    .push(tab_button("CPU", DashboardTab::Cpu, self.dashboard_tab))
+                    .push(tab_button("GPU", DashboardTab::Gpu, self.dashboard_tab))
+                    .push(tab_button("Memory", DashboardTab::Memory, self.dashboard_tab))
+                    .push(tab_button("Network", DashboardTab::Network, self.dashboard_tab))
+                    .spacing(6),
             )
-            .push(
-                cosmic::widget::row::with_capacity(2)
-                    .push(tab_button(
-                        "Memory",
-                        DashboardTab::Memory,
-                        self.dashboard_tab == DashboardTab::Memory,
-                    ))
-                    .push(tab_button(
-                        "Network",
-                        DashboardTab::Network,
-                        self.dashboard_tab == DashboardTab::Network,
-                    ))
-                    .spacing(4),
-            )
-            .spacing(6);
-
-        let body = match self.dashboard_tab {
-            DashboardTab::Overview => self.overview_tab(),
-            DashboardTab::Cpu => self.cpu_tab(),
-            DashboardTab::Gpu => self.gpu_tab(),
-            DashboardTab::Memory => self.memory_tab(),
-            DashboardTab::Network => self.network_tab(),
-        };
-
-        let dashboard = cosmic::widget::column::with_capacity(2)
-            .push(header)
-            .push(body)
-            .spacing(10)
-            .width(Length::Fixed(POPUP_WIDTH));
-
-        let scroll = cosmic::widget::scrollable(dashboard)
-            .height(Length::Fixed(POPUP_HEIGHT))
-            .width(Length::Fixed(POPUP_WIDTH));
-
-        self.core.applet.popup_container(scroll).into()
+            .spacing(8)
+            .into()
     }
 
     fn overview_tab(&self) -> cosmic::Element<'_, Message> {
-        cosmic::widget::column::with_capacity(6)
+        cosmic::widget::column::with_capacity(7)
             .push(
                 cosmic::widget::row::with_capacity(2)
                     .push(summary_cell(
@@ -208,17 +165,17 @@ impl SystemMonitor {
                             self.stats.gpu_temperature_text()
                         ),
                     ))
-                    .spacing(12),
+                    .spacing(16),
             )
             .push(
                 cosmic::widget::row::with_capacity(2)
-                    .push(summary_cell("RAM", self.stats.ram_percent_text()))
-                    .push(summary_cell("Swap", self.stats.swap_percent_text()))
-                    .spacing(12),
+                    .push(summary_cell("RAM", self.stats.ram_usage_text()))
+                    .push(summary_cell("Swap", self.stats.swap_usage_text()))
+                    .spacing(16),
             )
             .push(
                 cosmic::widget::row::with_capacity(2)
-                    .push(summary_cell("VRAM", self.stats.vram_percent_text()))
+                    .push(summary_cell("VRAM", self.stats.vram_usage_text()))
                     .push(summary_cell(
                         "Network",
                         format!(
@@ -227,7 +184,7 @@ impl SystemMonitor {
                             self.stats.network_upload_text()
                         ),
                     ))
-                    .spacing(12),
+                    .spacing(16),
             )
             .push(section_title("60-second history"))
             .push(graph_card(
@@ -240,38 +197,26 @@ impl SystemMonitor {
                 self.stats.gpu_usage_text(),
                 self.stats.gpu_usage_graph(),
             ))
-            .spacing(8)
-            .width(Length::Fill)
+            .spacing(10)
             .into()
     }
 
     fn cpu_tab(&self) -> cosmic::Element<'_, Message> {
-        let details = cosmic::widget::column::with_capacity(8)
-            .push(section_title("CPU"))
-            .push(metric_row("Model", self.stats.cpu_model_text()))
-            .push(metric_row("Cores", self.stats.cpu_topology_text()))
-            .push(metric_row("Average clock", self.stats.cpu_frequency_text()))
-            .push(metric_row("Load avg 1 / 5 / 15", self.stats.load_average_text()))
-            .push(metric_row("Uptime", self.stats.uptime_text()))
-            .push(metric_row("Usage", self.stats.cpu_usage_text()))
-            .push(metric_row(
-                "Temperature",
-                self.stats.cpu_temperature_text(),
-            ))
-            .spacing(4);
-
-        let mut cores =
-            cosmic::widget::column::with_capacity(self.stats.core_usage().len() + 1)
-                .push(section_title("Per-core usage"))
-                .spacing(3);
+        let mut cores = cosmic::widget::column::with_capacity(self.stats.core_usage().len() + 1)
+            .push(section_title("Per-core CPU usage"))
+            .spacing(3);
         for (index, usage) in self.stats.core_usage().iter().copied().enumerate() {
             cores = cores.push(cosmic::widget::text::caption(SystemStats::core_usage_line(
                 index, usage,
             )));
         }
 
-        cosmic::widget::column::with_capacity(5)
-            .push(details)
+        cosmic::widget::column::with_capacity(11)
+            .push(metric_row("Model", self.stats.cpu_model_text()))
+            .push(metric_row("Cores", self.stats.cpu_topology_text()))
+            .push(metric_row("Average clock", self.stats.cpu_frequency_text()))
+            .push(metric_row("Load avg 1 / 5 / 15", self.stats.load_average_text()))
+            .push(metric_row("Uptime", self.stats.uptime_text()))
             .push(graph_card(
                 "CPU usage",
                 self.stats.cpu_usage_text(),
@@ -284,27 +229,16 @@ impl SystemMonitor {
             ))
             .push(cores)
             .spacing(8)
-            .width(Length::Fill)
             .into()
     }
 
     fn gpu_tab(&self) -> cosmic::Element<'_, Message> {
-        let details = cosmic::widget::column::with_capacity(8)
-            .push(section_title("GPU"))
+        cosmic::widget::column::with_capacity(10)
             .push(metric_row("Model", self.stats.gpu_name_text()))
             .push(metric_row("Driver", self.stats.gpu_driver_text()))
-            .push(metric_row("Usage", self.stats.gpu_usage_text()))
-            .push(metric_row(
-                "Temperature",
-                self.stats.gpu_temperature_text(),
-            ))
-            .push(metric_row("VRAM", self.stats.vram_usage_text()))
             .push(metric_row("Power", self.stats.gpu_power_text()))
             .push(metric_row("Clocks", self.stats.gpu_clocks_text()))
-            .spacing(4);
-
-        cosmic::widget::column::with_capacity(3)
-            .push(details)
+            .push(metric_row("VRAM", self.stats.vram_usage_text()))
             .push(graph_card(
                 "GPU usage",
                 self.stats.gpu_usage_text(),
@@ -316,39 +250,35 @@ impl SystemMonitor {
                 self.stats.gpu_temperature_graph(),
             ))
             .spacing(8)
-            .width(Length::Fill)
             .into()
     }
 
     fn memory_tab(&self) -> cosmic::Element<'_, Message> {
-        cosmic::widget::column::with_capacity(7)
-            .push(section_title("Memory"))
+        cosmic::widget::column::with_capacity(10)
             .push(metric_row("RAM", self.stats.ram_usage_text()))
-            .push(metric_row("Swap", self.stats.swap_usage_text()))
-            .push(metric_row("VRAM", self.stats.vram_usage_text()))
             .push(graph_card(
                 "RAM",
                 self.stats.ram_percent_text(),
                 self.stats.ram_graph(),
             ))
+            .push(metric_row("Swap", self.stats.swap_usage_text()))
             .push(graph_card(
                 "Swap",
                 self.stats.swap_percent_text(),
                 self.stats.swap_graph(),
             ))
+            .push(metric_row("VRAM", self.stats.vram_usage_text()))
             .push(graph_card(
                 "VRAM",
                 self.stats.vram_percent_text(),
                 self.stats.vram_graph(),
             ))
             .spacing(8)
-            .width(Length::Fill)
             .into()
     }
 
     fn network_tab(&self) -> cosmic::Element<'_, Message> {
-        cosmic::widget::column::with_capacity(6)
-            .push(section_title("Network"))
+        cosmic::widget::column::with_capacity(8)
             .push(metric_row(
                 "Interfaces",
                 self.stats.network_interfaces_text(),
@@ -359,18 +289,39 @@ impl SystemMonitor {
             ))
             .push(metric_row("Upload", self.stats.network_upload_text()))
             .push(graph_card(
-                "Download",
+                "Network download",
                 self.stats.network_download_text(),
                 self.stats.network_download_graph(),
             ))
             .push(graph_card(
-                "Upload",
+                "Network upload",
                 self.stats.network_upload_text(),
                 self.stats.network_upload_graph(),
             ))
             .spacing(8)
-            .width(Length::Fill)
             .into()
+    }
+
+    fn dashboard_view(&self) -> cosmic::Element<'_, Message> {
+        let body = match self.dashboard_tab {
+            DashboardTab::Overview => self.overview_tab(),
+            DashboardTab::Cpu => self.cpu_tab(),
+            DashboardTab::Gpu => self.gpu_tab(),
+            DashboardTab::Memory => self.memory_tab(),
+            DashboardTab::Network => self.network_tab(),
+        };
+
+        let dashboard = cosmic::widget::column::with_capacity(2)
+            .push(self.dashboard_header())
+            .push(body)
+            .spacing(12)
+            .width(Length::Fill);
+
+        let scroll = cosmic::widget::scrollable(dashboard)
+            .height(Length::Fixed(POPUP_HEIGHT))
+            .width(Length::Fixed(POPUP_WIDTH));
+
+        self.core.applet.popup_container(scroll).into()
     }
 }
 
@@ -483,6 +434,17 @@ impl cosmic::Application for SystemMonitor {
     }
 }
 
+fn tab_button<'a>(
+    label: &'a str,
+    tab: DashboardTab,
+    active: DashboardTab,
+) -> cosmic::Element<'a, Message> {
+    let marker = if tab == active { "●" } else { "○" };
+    cosmic::widget::button::custom(cosmic::widget::text::caption(format!("{marker} {label}")))
+        .on_press(Message::SetDashboardTab(tab))
+        .into()
+}
+
 fn panel_metric_button<'a>(
     label: &'a str,
     metric: PanelMetric,
@@ -499,23 +461,6 @@ fn panel_metric_button<'a>(
     cosmic::widget::button::custom(content)
         .on_press(Message::TogglePanelMetric(metric))
         .width(Length::Fill)
-        .into()
-}
-
-fn tab_button<'a>(
-    label: &'a str,
-    tab: DashboardTab,
-    active: bool,
-) -> cosmic::Element<'a, Message> {
-    let marker = if active { "●" } else { "○" };
-    let content = cosmic::widget::row::with_capacity(2)
-        .push(cosmic::widget::text::caption(marker))
-        .push(cosmic::widget::text::caption(label))
-        .spacing(4);
-
-    cosmic::widget::button::custom(content)
-        .on_press(Message::SetDashboardTab(tab))
-        .width(Length::FillPortion(1))
         .into()
 }
 
