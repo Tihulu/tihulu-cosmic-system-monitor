@@ -10,7 +10,7 @@ use crate::{
 };
 
 const SYSTEM_MONITOR_APP_ID: &str = "io.github.tihulu.SystemMonitor";
-const POPUP_WIDTH: f32 = 340.0;
+const POPUP_WIDTH: f32 = 308.0;
 const POPUP_HEIGHT: f32 = 540.0;
 const GRAPH_HEIGHT: f32 = 52.0;
 
