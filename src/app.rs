@@ -10,7 +10,7 @@ use crate::{
 };
 
 const SYSTEM_MONITOR_APP_ID: &str = "io.github.tihulu.SystemMonitor";
-const POPUP_WIDTH: f32 = 308.0;
+const POPUP_WIDTH: f32 = 276.0;
 const POPUP_HEIGHT: f32 = 540.0;
 const GRAPH_HEIGHT: f32 = 52.0;
 
@@ -50,6 +50,7 @@ enum Message {
     OpenPanelSettings,
     SetDashboardTab(DashboardTab),
     TogglePanelMetric(PanelMetric),
+    SetPsuName(String),
     PopupClosed(Id),
 }
 
@@ -83,7 +84,14 @@ impl SystemMonitor {
     }
 
     fn panel_settings_view(&self) -> cosmic::Element<'_, Message> {
-        let settings = cosmic::widget::column::with_capacity(9)
+        let psu_name = self.panel_config.psu_name.as_deref().unwrap_or("");
+        let psu_input = cosmic::widget::inline_input(
+            "e.g. be quiet! Straight Power 12",
+            psu_name,
+        )
+        .on_input(Message::SetPsuName);
+
+        let settings = cosmic::widget::column::with_capacity(13)
             .push(cosmic::widget::text("Panel display").size(20))
             .push(cosmic::widget::text::caption(
                 "Choose which live metrics are shown in the COSMIC panel.",
@@ -117,6 +125,14 @@ impl SystemMonitor {
                 "Network download / upload",
                 PanelMetric::Network,
                 self.panel_config.is_visible(PanelMetric::Network),
+            ))
+            .push(section_title("PSU identity"))
+            .push(cosmic::widget::text::caption(
+                "If Linux cannot identify the PSU, enter its brand/model here.",
+            ))
+            .push(psu_input)
+            .push(cosmic::widget::text::caption(
+                "This sets the PSU label only; power/rail/fan telemetry is shown only when hardware exposes it.",
             ))
             .push(cosmic::widget::text::caption(
                 "Left-click the applet for the dashboard. Right-click again to close.",
@@ -341,25 +357,34 @@ impl SystemMonitor {
     fn psu_tab(&self) -> cosmic::Element<'_, Message> {
         let supply_lines = self.stats.power_supply_lines();
         let sensor_lines = self.stats.power_sensor_lines();
+        let hardware_supply_lines = supply_lines
+            .iter()
+            .filter(|line| !line.starts_with("Configured PSU:"))
+            .collect::<Vec<_>>();
 
         let mut content = cosmic::widget::column::with_capacity(
-            supply_lines.len() + sensor_lines.len() + 6,
+            hardware_supply_lines.len() + sensor_lines.len() + 8,
         )
-        .push(section_title("PSU / power"))
-        .push(metric_block(
+        .push(section_title("PSU / power"));
+
+        if let Some(name) = self.panel_config.psu_name.as_ref().filter(|name| !name.trim().is_empty()) {
+            content = content.push(metric_block("Configured PSU", name.trim().to_string()));
+        }
+
+        content = content.push(metric_block(
             "GPU board power",
             self.stats.gpu_power_text(),
         ));
 
-        if supply_lines.is_empty() {
+        if hardware_supply_lines.is_empty() {
             content = content.push(metric_block(
                 "PSU / AC telemetry",
                 "Not exposed by this hardware/driver".into(),
             ));
         } else {
             content = content.push(section_title("Power supplies exposed by Linux"));
-            for line in supply_lines {
-                content = content.push(metric_block("Supply", line.clone()));
+            for line in hardware_supply_lines {
+                content = content.push(metric_block("Supply", (*line).clone()));
             }
         }
 
@@ -377,7 +402,7 @@ impl SystemMonitor {
 
         content
             .push(cosmic::widget::text::caption(
-                "Desktop ATX PSUs usually do not expose model, rated wattage, rail current, efficiency or total wall draw to Linux. hwmon readings above are individual device sensors, not guaranteed PSU total power.",
+                "Desktop ATX PSUs usually do not expose model, rated wattage, rail current, efficiency or total wall draw to Linux. A configured PSU label is identification only; hwmon readings are individual device sensors, not guaranteed PSU total power.",
             ))
             .spacing(8)
             .into()
@@ -459,6 +484,15 @@ impl cosmic::Application for SystemMonitor {
             Message::TogglePanelMetric(metric) => {
                 self.panel_config.toggle(metric);
                 self.panel_config.save();
+            }
+            Message::SetPsuName(value) => {
+                self.panel_config.psu_name = if value.trim().is_empty() {
+                    None
+                } else {
+                    Some(value)
+                };
+                self.panel_config.save();
+                self.stats.refresh();
             }
             Message::PopupClosed(id) => {
                 if self.popup.as_ref() == Some(&id) {
