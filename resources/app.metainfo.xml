@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="generic">
+  <id>io.github.tihulu.SystemMonitor</id>
+  <name>Tihulu System Monitor</name>
+  <summary>Compact hardware monitor applet for COSMIC</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>Displays CPU usage and temperature, GPU usage and temperature, RAM usage, and VRAM usage directly in the COSMIC panel.</p>
+  </description>
+  <launchable type="desktop-id">io.github.tihulu.SystemMonitor.desktop</launchable>
+  <provides>
+    <id>com.system76.CosmicApplet</id>
+  </provides>
+  <url type="homepage">https://github.com/Tihulu/tihulu-cosmic-system-monitor</url>
+</component>
