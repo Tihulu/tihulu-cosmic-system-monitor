@@ -9,9 +9,14 @@ pub(super) struct PowerSnapshot {
 }
 
 pub(super) fn read_power_snapshot() -> PowerSnapshot {
+    let mut supplies = read_power_supplies();
+    supplies.extend(read_smart_psu_hwmon());
+    supplies.sort();
+    supplies.dedup();
+
     PowerSnapshot {
-        supplies: read_power_supplies(),
-        sensors: read_hwmon_power_sensors(),
+        supplies,
+        sensors: read_component_power_sensors(),
     }
 }
 
@@ -29,11 +34,9 @@ fn read_power_supplies() -> Vec<String> {
         let status = read_text(path.join("status"));
         let manufacturer = read_text(path.join("manufacturer"));
         let model = read_text(path.join("model_name"));
-        let power_w = read_micro_value(path.join("power_now"))
-            .or_else(|| inferred_power_w(&path));
+        let power_w = read_micro_value(path.join("power_now")).or_else(|| inferred_power_w(&path));
 
-        let mut parts = Vec::new();
-        parts.push(format!("{name} ({kind})"));
+        let mut parts = vec![format!("{name} ({kind})")];
         if let Some(online) = online {
             parts.push(if online { "online".into() } else { "offline".into() });
         }
@@ -42,7 +45,7 @@ fn read_power_supplies() -> Vec<String> {
                 parts.push(status);
             }
         }
-        if let Some(power_w) = power_w {
+        if let Some(power_w) = power_w.filter(|value| value.is_finite() && *value > 0.5) {
             parts.push(format!("{power_w:.1} W"));
         }
         if manufacturer.is_some() || model.is_some() {
@@ -62,7 +65,7 @@ fn read_power_supplies() -> Vec<String> {
     lines
 }
 
-fn read_hwmon_power_sensors() -> Vec<String> {
+fn read_smart_psu_hwmon() -> Vec<String> {
     let Ok(hwmons) = fs::read_dir("/sys/class/hwmon") else {
         return Vec::new();
     };
@@ -70,7 +73,82 @@ fn read_hwmon_power_sensors() -> Vec<String> {
     let mut lines = Vec::new();
     for hwmon in hwmons.flatten() {
         let path = hwmon.path();
-        let chip = read_text(path.join("name")).unwrap_or_else(|| hwmon.file_name().to_string_lossy().into());
+        let chip = read_text(path.join("name"))
+            .unwrap_or_else(|| hwmon.file_name().to_string_lossy().into());
+        if !is_smart_psu_chip(&chip) {
+            continue;
+        }
+
+        lines.push(format!("Digital PSU interface: {chip}"));
+
+        for index in 1..=8 {
+            if let Some(power_w) = read_micro_value(path.join(format!("power{index}_input")))
+                .filter(|value| value.is_finite() && *value > 0.5)
+            {
+                let label = read_text(path.join(format!("power{index}_label")))
+                    .unwrap_or_else(|| if index == 1 { "Total power".into() } else { format!("Power {index}") });
+                lines.push(format!("{label}: {power_w:.1} W"));
+            }
+        }
+
+        for index in 0..=8 {
+            if let Some(voltage_v) = read_milli_value(path.join(format!("in{index}_input")))
+                .filter(|value| value.is_finite() && *value > 0.0)
+            {
+                let label = read_text(path.join(format!("in{index}_label")))
+                    .unwrap_or_else(|| if index == 0 { "AC input".into() } else { format!("Voltage {index}") });
+                lines.push(format!("{label}: {voltage_v:.2} V"));
+            }
+        }
+
+        for index in 1..=8 {
+            if let Some(current_a) = read_milli_value(path.join(format!("curr{index}_input")))
+                .filter(|value| value.is_finite() && *value > 0.0)
+            {
+                let label = read_text(path.join(format!("curr{index}_label")))
+                    .unwrap_or_else(|| if index == 1 { "Total current".into() } else { format!("Current {index}") });
+                lines.push(format!("{label}: {current_a:.2} A"));
+            }
+        }
+
+        for index in 1..=4 {
+            if let Some(rpm) = read_raw_value(path.join(format!("fan{index}_input")))
+                .filter(|value| value.is_finite() && *value > 0.0)
+            {
+                lines.push(format!("PSU fan {index}: {rpm:.0} RPM"));
+            }
+        }
+
+        for index in 1..=8 {
+            if let Some(temp_c) = read_milli_value(path.join(format!("temp{index}_input")))
+                .filter(|value| value.is_finite() && *value > -50.0 && *value < 200.0)
+            {
+                let label = read_text(path.join(format!("temp{index}_label")))
+                    .unwrap_or_else(|| format!("Temperature {index}"));
+                lines.push(format!("{label}: {temp_c:.1}°C"));
+            }
+        }
+    }
+
+    lines.sort();
+    lines.truncate(24);
+    lines
+}
+
+fn read_component_power_sensors() -> Vec<String> {
+    let Ok(hwmons) = fs::read_dir("/sys/class/hwmon") else {
+        return Vec::new();
+    };
+
+    let mut lines = Vec::new();
+    for hwmon in hwmons.flatten() {
+        let path = hwmon.path();
+        let chip = read_text(path.join("name"))
+            .unwrap_or_else(|| hwmon.file_name().to_string_lossy().into());
+        if is_smart_psu_chip(&chip) {
+            continue;
+        }
+
         let Ok(entries) = fs::read_dir(&path) else {
             continue;
         };
@@ -82,7 +160,9 @@ fn read_hwmon_power_sensors() -> Vec<String> {
             }
 
             let stem = filename.trim_end_matches("_input");
-            let Some(power_w) = read_micro_value(entry.path()) else {
+            let Some(power_w) = read_micro_value(entry.path())
+                .filter(|value| value.is_finite() && *value > 0.5)
+            else {
                 continue;
             };
             let label = read_text(path.join(format!("{stem}_label")))
@@ -92,8 +172,20 @@ fn read_hwmon_power_sensors() -> Vec<String> {
     }
 
     lines.sort();
+    lines.dedup();
     lines.truncate(12);
     lines
+}
+
+fn is_smart_psu_chip(chip: &str) -> bool {
+    let chip = chip.to_ascii_lowercase().replace('-', "_");
+    chip.contains("corsair_psu")
+        || chip.contains("pmbus")
+        || chip.contains("crps")
+        || chip.contains("dps920")
+        || chip.contains("cffps")
+        || chip.contains("fsp3y")
+        || chip.contains("psu")
 }
 
 fn inferred_power_w(path: &Path) -> Option<f64> {
@@ -103,11 +195,31 @@ fn inferred_power_w(path: &Path) -> Option<f64> {
 }
 
 fn read_micro_value(path: impl AsRef<Path>) -> Option<f64> {
-    let raw = fs::read_to_string(path).ok()?.trim().parse::<f64>().ok()?;
-    Some(raw / 1_000_000.0)
+    Some(read_raw_value(path)? / 1_000_000.0)
+}
+
+fn read_milli_value(path: impl AsRef<Path>) -> Option<f64> {
+    Some(read_raw_value(path)? / 1_000.0)
+}
+
+fn read_raw_value(path: impl AsRef<Path>) -> Option<f64> {
+    fs::read_to_string(path).ok()?.trim().parse::<f64>().ok()
 }
 
 fn read_text(path: impl AsRef<Path>) -> Option<String> {
     let value = fs::read_to_string(path).ok()?.trim().to_string();
     (!value.is_empty()).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_smart_psu_hwmon_names() {
+        assert!(is_smart_psu_chip("corsair_psu"));
+        assert!(is_smart_psu_chip("pmbus"));
+        assert!(is_smart_psu_chip("dps920ab"));
+        assert!(!is_smart_psu_chip("amdgpu"));
+    }
 }
