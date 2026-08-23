@@ -77,11 +77,35 @@ impl SystemStats {
     }
 
     pub(crate) fn ram_panel_text(&self) -> String {
-        format_memory("RAM", self.ram_used_bytes, self.ram_total_bytes)
+        format_memory_panel("RAM", self.ram_used_bytes, self.ram_total_bytes)
     }
 
     pub(crate) fn vram_panel_text(&self) -> String {
-        format_memory("VRAM", self.vram_used_bytes, self.vram_total_bytes)
+        format_memory_panel("VRAM", self.vram_used_bytes, self.vram_total_bytes)
+    }
+
+    pub(crate) fn cpu_usage_text(&self) -> String {
+        format_percent(self.cpu_usage_percent).trim().to_string()
+    }
+
+    pub(crate) fn cpu_temperature_text(&self) -> String {
+        format_temperature(self.cpu_temperature_c)
+    }
+
+    pub(crate) fn gpu_usage_text(&self) -> String {
+        format_percent(self.gpu_usage_percent).trim().to_string()
+    }
+
+    pub(crate) fn gpu_temperature_text(&self) -> String {
+        format_temperature(self.gpu_temperature_c)
+    }
+
+    pub(crate) fn ram_usage_text(&self) -> String {
+        format_memory_detail(self.ram_used_bytes, self.ram_total_bytes)
+    }
+
+    pub(crate) fn vram_usage_text(&self) -> String {
+        format_memory_detail(self.vram_used_bytes, self.vram_total_bytes)
     }
 }
 
@@ -104,7 +128,6 @@ fn parse_cpu_sample(contents: &str) -> Option<CpuSample> {
     }
 
     let idle = values.get(3).copied().unwrap_or(0) + values.get(4).copied().unwrap_or(0);
-    // guest and guest_nice are already included in user/nice in /proc/stat.
     let total = values.iter().take(8).copied().sum();
     Some(CpuSample { idle, total })
 }
@@ -358,12 +381,24 @@ fn format_temperature(value: Option<f64>) -> String {
         .unwrap_or_else(|| "--°C".to_string())
 }
 
-fn format_memory(label: &str, used: Option<u64>, total: Option<u64>) -> String {
+fn format_memory_panel(label: &str, used: Option<u64>, total: Option<u64>) -> String {
     match (used, total) {
         (Some(used), Some(total)) if total > 0 => {
             format!("{label} {:.1}/{:.1}G", used as f64 / GIB, total as f64 / GIB)
         }
         _ => format!("{label} --/--G"),
+    }
+}
+
+fn format_memory_detail(used: Option<u64>, total: Option<u64>) -> String {
+    match (used, total) {
+        (Some(used), Some(total)) if total > 0 => format!(
+            "{:.1} / {:.1} GiB ({:.0}%)",
+            used as f64 / GIB,
+            total as f64 / GIB,
+            used as f64 * 100.0 / total as f64
+        ),
+        _ => "-- / -- GiB".to_string(),
     }
 }
 
