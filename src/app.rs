@@ -7,6 +7,8 @@ use cosmic::iced::{Length, window::Id};
 use crate::stats::SystemStats;
 
 const SYSTEM_MONITOR_APP_ID: &str = "io.github.tihulu.SystemMonitor";
+const POPUP_WIDTH: f32 = 330.0;
+const POPUP_HEIGHT: f32 = 560.0;
 
 pub(crate) fn run() -> cosmic::iced::Result {
     cosmic::applet::run::<SystemMonitor>(())
@@ -117,13 +119,13 @@ impl cosmic::Application for SystemMonitor {
     }
 
     fn view_window(&self, _id: Id) -> cosmic::Element<'_, Self::Message> {
-        let summary = cosmic::widget::column::with_capacity(3)
+        let summary = cosmic::widget::column::with_capacity(4)
             .push(cosmic::widget::text("Tihulu System Monitor").size(20))
             .push(cosmic::widget::text::caption(
                 "Live hardware dashboard · 1 s refresh · last 60 samples",
             ))
             .push(
-                cosmic::widget::row::with_capacity(4)
+                cosmic::widget::row::with_capacity(2)
                     .push(summary_cell(
                         "CPU",
                         format!(
@@ -140,87 +142,61 @@ impl cosmic::Application for SystemMonitor {
                             self.stats.gpu_temperature_text()
                         ),
                     ))
-                    .push(summary_cell(
-                        "RAM",
-                        format!(
-                            "{}  {}",
-                            self.stats.ram_percent_text(),
-                            self.stats.ram_usage_text()
-                        ),
-                    ))
-                    .push(summary_cell(
-                        "Network",
-                        format!(
-                            "↓ {}  ↑ {}",
-                            self.stats.network_download_text(),
-                            self.stats.network_upload_text()
-                        ),
-                    ))
+                    .spacing(16),
+            )
+            .push(
+                cosmic::widget::row::with_capacity(2)
+                    .push(summary_cell("RAM", self.stats.ram_percent_text()))
+                    .push(summary_cell("VRAM", self.stats.vram_percent_text()))
                     .spacing(16),
             )
             .spacing(8);
 
-        let history = cosmic::widget::column::with_capacity(5)
+        let history = cosmic::widget::column::with_capacity(9)
             .push(section_title("60-second history"))
-            .push(
-                cosmic::widget::row::with_capacity(2)
-                    .push(graph_card(
-                        "CPU usage",
-                        self.stats.cpu_usage_text(),
-                        self.stats.cpu_usage_graph(),
-                    ))
-                    .push(graph_card(
-                        "CPU temperature",
-                        self.stats.cpu_temperature_text(),
-                        self.stats.cpu_temperature_graph(),
-                    ))
-                    .spacing(16),
-            )
-            .push(
-                cosmic::widget::row::with_capacity(2)
-                    .push(graph_card(
-                        "GPU usage",
-                        self.stats.gpu_usage_text(),
-                        self.stats.gpu_usage_graph(),
-                    ))
-                    .push(graph_card(
-                        "GPU temperature",
-                        self.stats.gpu_temperature_text(),
-                        self.stats.gpu_temperature_graph(),
-                    ))
-                    .spacing(16),
-            )
-            .push(
-                cosmic::widget::row::with_capacity(2)
-                    .push(graph_card(
-                        "RAM",
-                        self.stats.ram_percent_text(),
-                        self.stats.ram_graph(),
-                    ))
-                    .push(graph_card(
-                        "VRAM",
-                        self.stats.vram_percent_text(),
-                        self.stats.vram_graph(),
-                    ))
-                    .spacing(16),
-            )
-            .push(
-                cosmic::widget::row::with_capacity(2)
-                    .push(graph_card(
-                        "Network download",
-                        self.stats.network_download_text(),
-                        self.stats.network_download_graph(),
-                    ))
-                    .push(graph_card(
-                        "Network upload",
-                        self.stats.network_upload_text(),
-                        self.stats.network_upload_graph(),
-                    ))
-                    .spacing(16),
-            )
+            .push(graph_card(
+                "CPU usage",
+                self.stats.cpu_usage_text(),
+                self.stats.cpu_usage_graph(),
+            ))
+            .push(graph_card(
+                "CPU temperature",
+                self.stats.cpu_temperature_text(),
+                self.stats.cpu_temperature_graph(),
+            ))
+            .push(graph_card(
+                "GPU usage",
+                self.stats.gpu_usage_text(),
+                self.stats.gpu_usage_graph(),
+            ))
+            .push(graph_card(
+                "GPU temperature",
+                self.stats.gpu_temperature_text(),
+                self.stats.gpu_temperature_graph(),
+            ))
+            .push(graph_card(
+                "RAM",
+                self.stats.ram_percent_text(),
+                self.stats.ram_graph(),
+            ))
+            .push(graph_card(
+                "VRAM",
+                self.stats.vram_percent_text(),
+                self.stats.vram_graph(),
+            ))
+            .push(graph_card(
+                "Network download",
+                self.stats.network_download_text(),
+                self.stats.network_download_graph(),
+            ))
+            .push(graph_card(
+                "Network upload",
+                self.stats.network_upload_text(),
+                self.stats.network_upload_graph(),
+            ))
             .spacing(10);
 
-        let cpu_details = cosmic::widget::column::with_capacity(7)
+        let cpu_details = cosmic::widget::column::with_capacity(8)
             .push(section_title("CPU"))
             .push(metric_row("Model", self.stats.cpu_model_text()))
             .push(metric_row("Cores", self.stats.cpu_topology_text()))
@@ -234,7 +210,7 @@ impl cosmic::Application for SystemMonitor {
             ))
             .spacing(4);
 
-        let gpu_details = cosmic::widget::column::with_capacity(7)
+        let gpu_details = cosmic::widget::column::with_capacity(8)
             .push(section_title("GPU"))
             .push(metric_row("Model", self.stats.gpu_name_text()))
             .push(metric_row("Driver", self.stats.gpu_driver_text()))
@@ -274,25 +250,24 @@ impl cosmic::Application for SystemMonitor {
             ));
         }
 
-        let dashboard = cosmic::widget::column::with_capacity(7)
+        let dashboard = cosmic::widget::column::with_capacity(11)
             .push(summary)
             .push(cosmic::widget::text::caption(" "))
             .push(history)
             .push(cosmic::widget::text::caption(" "))
-            .push(
-                cosmic::widget::row::with_capacity(2)
-                    .push(cpu_details.width(Length::FillPortion(1)))
-                    .push(gpu_details.width(Length::FillPortion(1)))
-                    .spacing(24),
-            )
+            .push(cpu_details)
+            .push(cosmic::widget::text::caption(" "))
+            .push(gpu_details)
+            .push(cosmic::widget::text::caption(" "))
             .push(memory_network)
+            .push(cosmic::widget::text::caption(" "))
             .push(core_column)
             .spacing(10)
             .width(Length::Fill);
 
         let scroll = cosmic::widget::scrollable(dashboard)
-            .height(Length::Fixed(640.0))
-            .width(Length::Fixed(700.0));
+            .height(Length::Fixed(POPUP_HEIGHT))
+            .width(Length::Fixed(POPUP_WIDTH));
 
         self.core.applet.popup_container(scroll).into()
     }
@@ -307,6 +282,7 @@ fn summary_cell<'a>(label: &'a str, value: String) -> cosmic::Element<'a, Messag
         .push(cosmic::widget::text::caption(label))
         .push(cosmic::widget::text::body(value))
         .spacing(2)
+        .width(Length::FillPortion(1))
         .into()
 }
 
