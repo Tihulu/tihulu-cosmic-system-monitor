@@ -4,7 +4,7 @@
   <name>Tihulu System Monitor</name>
   <summary>Compact hardware monitor applet for COSMIC</summary>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>GPL-3.0-or-later</project_license>
+  <project_license>AGPL-3.0-only</project_license>
   <description>
     <p>Displays CPU usage and temperature, GPU usage and temperature, RAM usage, and VRAM usage directly in the COSMIC panel.</p>
   </description>
