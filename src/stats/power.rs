@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use std::{fs, path::Path};
+use std::{env, fs, path::{Path, PathBuf}};
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct PowerSnapshot {
@@ -11,6 +11,9 @@ pub(super) struct PowerSnapshot {
 pub(super) fn read_power_snapshot() -> PowerSnapshot {
     let mut supplies = read_power_supplies();
     supplies.extend(read_smart_psu_hwmon());
+    if let Some(name) = read_configured_psu_name() {
+        supplies.push(format!("Configured PSU: {name}"));
+    }
     supplies.sort();
     supplies.dedup();
 
@@ -175,6 +178,25 @@ fn read_component_power_sensors() -> Vec<String> {
     lines.dedup();
     lines.truncate(12);
     lines
+}
+
+fn read_configured_psu_name() -> Option<String> {
+    let path = config_path();
+    let contents = fs::read_to_string(path).ok()?;
+    contents.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "psu_name" && !value.trim().is_empty()).then(|| value.trim().to_string())
+    })
+}
+
+fn config_path() -> PathBuf {
+    if let Some(base) = env::var_os("XDG_CONFIG_HOME") {
+        return PathBuf::from(base).join("tihulu-cosmic-system-monitor/panel.conf");
+    }
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join(".config/tihulu-cosmic-system-monitor/panel.conf");
+    }
+    PathBuf::from("/tmp/tihulu-cosmic-system-monitor-panel.conf")
 }
 
 fn is_smart_psu_chip(chip: &str) -> bool {
