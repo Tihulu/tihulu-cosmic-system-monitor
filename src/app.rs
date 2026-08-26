@@ -10,8 +10,9 @@ use crate::{
 };
 
 const SYSTEM_MONITOR_APP_ID: &str = "io.github.tihulu.SystemMonitor";
-const POPUP_WIDTH: f32 = 276.0;
+const POPUP_WIDTH: f32 = 300.0;
 const POPUP_HEIGHT: f32 = 540.0;
+const POPUP_PADDING: f32 = 12.0;
 const GRAPH_HEIGHT: f32 = 52.0;
 
 pub(crate) fn run() -> cosmic::iced::Result {
@@ -85,11 +86,9 @@ impl SystemMonitor {
 
     fn panel_settings_view(&self) -> cosmic::Element<'_, Message> {
         let psu_name = self.panel_config.psu_name.as_deref().unwrap_or("");
-        let psu_input = cosmic::widget::inline_input(
-            "e.g. be quiet! Straight Power 12",
-            psu_name,
-        )
-        .on_input(Message::SetPsuName);
+        let psu_input =
+            cosmic::widget::inline_input("e.g. be quiet! Straight Power 12", psu_name)
+                .on_input(Message::SetPsuName);
 
         let settings = cosmic::widget::column::with_capacity(13)
             .push(cosmic::widget::text("Panel display").size(20))
@@ -138,9 +137,13 @@ impl SystemMonitor {
                 "Left-click the applet for the dashboard. Right-click again to close.",
             ))
             .spacing(8)
+            .width(Length::Fill);
+
+        let padded = cosmic::widget::container(settings)
+            .padding(POPUP_PADDING)
             .width(Length::Fixed(POPUP_WIDTH));
 
-        self.core.applet.popup_container(settings).into()
+        self.core.applet.popup_container(padded).into()
     }
 
     fn dashboard_header(&self) -> cosmic::Element<'_, Message> {
@@ -151,15 +154,27 @@ impl SystemMonitor {
             ))
             .push(
                 cosmic::widget::row::with_capacity(3)
-                    .push(tab_button("Overview", DashboardTab::Overview, self.dashboard_tab))
+                    .push(tab_button(
+                        "Overview",
+                        DashboardTab::Overview,
+                        self.dashboard_tab,
+                    ))
                     .push(tab_button("CPU", DashboardTab::Cpu, self.dashboard_tab))
                     .push(tab_button("GPU", DashboardTab::Gpu, self.dashboard_tab))
                     .spacing(4),
             )
             .push(
                 cosmic::widget::row::with_capacity(3)
-                    .push(tab_button("Memory", DashboardTab::Memory, self.dashboard_tab))
-                    .push(tab_button("Network", DashboardTab::Network, self.dashboard_tab))
+                    .push(tab_button(
+                        "Memory",
+                        DashboardTab::Memory,
+                        self.dashboard_tab,
+                    ))
+                    .push(tab_button(
+                        "Network",
+                        DashboardTab::Network,
+                        self.dashboard_tab,
+                    ))
                     .push(tab_button("PSU", DashboardTab::Psu, self.dashboard_tab))
                     .spacing(4),
             )
@@ -367,7 +382,12 @@ impl SystemMonitor {
         )
         .push(section_title("PSU / power"));
 
-        if let Some(name) = self.panel_config.psu_name.as_ref().filter(|name| !name.trim().is_empty()) {
+        if let Some(name) = self
+            .panel_config
+            .psu_name
+            .as_ref()
+            .filter(|name| !name.trim().is_empty())
+        {
             content = content.push(metric_block("Configured PSU", name.trim().to_string()));
         }
 
@@ -426,9 +446,13 @@ impl SystemMonitor {
 
         let scroll = cosmic::widget::scrollable(dashboard)
             .height(Length::Fixed(POPUP_HEIGHT))
+            .width(Length::Fill);
+
+        let padded = cosmic::widget::container(scroll)
+            .padding(POPUP_PADDING)
             .width(Length::Fixed(POPUP_WIDTH));
 
-        self.core.applet.popup_container(scroll).into()
+        self.core.applet.popup_container(padded).into()
     }
 }
 
