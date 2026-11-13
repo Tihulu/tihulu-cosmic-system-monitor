@@ -39,6 +39,22 @@ jobs:
         run: cargo build --release
       - name: Validate read-only QA sampler shell syntax
         run: bash -n scripts/sample-cosmic-memory.sh
+      - name: Verify pinned quick-install REF archive checkout (no installation)
+        env:
+          INSTALL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # quick-install.sh uses /archive/${REF}.tar.gz, not git checkout.
+          # Prove the exact candidate SHA archive can be obtained and contains
+          # the same source and installer, without running sudo/install.
+          test -n "$INSTALL_REF"
+          source_dir="$(mktemp -d)"
+          trap 'rm -rf "$source_dir"' EXIT
+          curl -fL --retry 3 --silent --show-error \
+            "https://github.com/${GITHUB_REPOSITORY}/archive/${INSTALL_REF}.tar.gz" \
+            | tar -xz -C "$source_dir" --strip-components=1
+          cmp src/app.rs "$source_dir/src/app.rs"
+          cmp scripts/quick-install.sh "$source_dir/scripts/quick-install.sh"
+          grep -F 'REF="${REF:-stable}"' "$source_dir/scripts/quick-install.sh"
 
   promote-stable:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
