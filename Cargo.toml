@@ -7,4 +7,4 @@ description = "A compact CPU, GPU, RAM and VRAM monitor applet for the COSMIC de
 repository = "https://github.com/Tihulu/tihulu-cosmic-system-monitor"
 
 [dependencies]
-libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = ["applet"] }
+libcosmic = { git = "https://github.com/pop-os/libcosmic", rev = "ecc5fe4164e1c9024b932382d24ea41f24147e75", default-features = false, features = ["applet"] }

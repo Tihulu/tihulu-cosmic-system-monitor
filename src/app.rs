@@ -35,8 +35,24 @@ enum DashboardTab {
     Psu,
 }
 
+// Keep the autosize identity stable for the entire lifetime of an applet.
+// Iced/libcosmic use widget IDs for state and layout operations; a fresh ID
+// during every view() call makes each one-second redraw look like a new widget.
+struct PanelAutosizeId(cosmic::widget::Id);
+
+impl PanelAutosizeId {
+    fn new() -> Self {
+        Self(cosmic::widget::Id::unique())
+    }
+
+    fn for_view(&self) -> cosmic::widget::Id {
+        self.0.clone()
+    }
+}
+
 struct SystemMonitor {
     core: cosmic::app::Core,
+    panel_autosize_id: PanelAutosizeId,
     popup: Option<Id>,
     popup_kind: PopupKind,
     dashboard_tab: DashboardTab,
@@ -473,6 +489,7 @@ impl cosmic::Application for SystemMonitor {
         (
             Self {
                 core,
+                panel_autosize_id: PanelAutosizeId::new(),
                 popup: None,
                 popup_kind: PopupKind::Dashboard,
                 dashboard_tab: DashboardTab::Overview,
@@ -559,7 +576,7 @@ impl cosmic::Application for SystemMonitor {
 
         let interactive = mouse_area(button).on_right_release(Message::OpenPanelSettings);
 
-        cosmic::widget::autosize::autosize(interactive, cosmic::widget::Id::unique()).into()
+        cosmic::widget::autosize::autosize(interactive, self.panel_autosize_id.for_view()).into()
     }
 
     fn view_window(&self, _id: Id) -> cosmic::Element<'_, Self::Message> {
@@ -639,4 +656,25 @@ fn graph_card<'a>(label: &'a str, value: String, svg: String) -> cosmic::Element
         .spacing(2)
         .width(Length::Fill)
         .into()
+}
+
+#[cfg(test)]
+mod autosize_identity_tests {
+    use super::PanelAutosizeId;
+
+    #[test]
+    fn autosize_id_is_reused_for_every_view() {
+        let ids = PanelAutosizeId::new();
+        let first_render = ids.for_view();
+        for _ in 0..600 {
+            assert_eq!(ids.for_view(), first_render);
+        }
+    }
+
+    #[test]
+    fn each_applet_instance_has_a_distinct_autosize_id() {
+        let first = PanelAutosizeId::new();
+        let second = PanelAutosizeId::new();
+        assert_ne!(first.for_view(), second.for_view());
+    }
 }

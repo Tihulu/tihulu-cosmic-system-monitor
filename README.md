@@ -10,6 +10,32 @@ curl -fsSL https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor
 
 The one-line installer always installs the **CI-verified `stable` branch**. New changes are developed on `main`; only after GitHub Actions finishes successfully does CI automatically promote that exact commit to `stable`. If CI is red, the installer keeps using the previous known-good build.
 
+## Beta test — COSMIC Panel memory mitigation (opt-in)
+
+> **BETA — TEST ONLY.** This is **not** the stable release. Initial owner-machine observations with three running TIHULU applet processes are encouraging, but comprehensive independent memory QA is still pending. [Beta PR #1](https://github.com/Tihulu/tihulu-cosmic-system-monitor/pull/1) contains the test evidence and limitations.
+
+The beta candidate tested by the owner uses the exact application source commit `b9d49b0249817390ad63af33745e0c547c912bda`. Install it only if you are comfortable replacing the current applet binary and can restore a backup.
+
+**Back up first** (if already installed):
+
+```bash
+sudo cp -a /usr/bin/tihulu-cosmic-system-monitor /usr/bin/tihulu-cosmic-system-monitor.pre-p1
+```
+
+**Install this beta candidate:**
+
+```bash
+REF=b9d49b0249817390ad63af33745e0c547c912bda bash -o pipefail -c 'curl -fsSL "https://raw.githubusercontent.com/Tihulu/tihulu-cosmic-system-monitor/$REF/scripts/quick-install.sh" | bash'
+```
+
+The installer may use `sudo`, install build dependencies, and overwrite `/usr/bin/tihulu-cosmic-system-monitor`; **this is not a side-by-side installation**. To roll back the applet binary after removing/restarting the running applets:
+
+```bash
+sudo cp -a /usr/bin/tihulu-cosmic-system-monitor.pre-p1 /usr/bin/tihulu-cosmic-system-monitor
+```
+
+In the first 10-minute owner-side RSS smoke test, `cosmic-panel` RSS decreased from **578852 KiB to 560796 KiB** with the same panel PID; a subsequent check confirmed three running applet processes. This does **not** prove a complete leak fix. **`main` and `stable` remain unchanged by this beta PR.**
+
 After installation, open **Settings → Desktop → Panel** and add **Tihulu System Monitor**. If an older copy is already running, remove/re-add the applet or log out and back in.
 
 ## Panel
