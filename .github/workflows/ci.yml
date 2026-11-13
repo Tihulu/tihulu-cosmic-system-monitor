@@ -52,8 +52,10 @@ jobs:
           curl -fL --retry 3 --silent --show-error \
             "https://github.com/${GITHUB_REPOSITORY}/archive/${INSTALL_REF}.tar.gz" \
             | tar -xz -C "$source_dir" --strip-components=1
-          cmp src/app.rs "$source_dir/src/app.rs"
-          cmp scripts/quick-install.sh "$source_dir/scripts/quick-install.sh"
+          # cargo fmt above may edit the working tree; compare against the
+          # immutable checkout commit rather than formatted workspace bytes.
+          git show HEAD:src/app.rs | cmp - "$source_dir/src/app.rs"
+          git show HEAD:scripts/quick-install.sh | cmp - "$source_dir/scripts/quick-install.sh"
           grep -F 'REF="${REF:-stable}"' "$source_dir/scripts/quick-install.sh"
 
   promote-stable:
