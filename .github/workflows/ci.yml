@@ -55,6 +55,7 @@ jobs:
           # cargo fmt above may edit the working tree; compare against the
           # immutable checkout commit rather than formatted workspace bytes.
           git show HEAD:src/app.rs | cmp - "$source_dir/src/app.rs"
+          git show HEAD:Cargo.toml | cmp - "$source_dir/Cargo.toml"
           git show HEAD:scripts/quick-install.sh | cmp - "$source_dir/scripts/quick-install.sh"
           grep -F 'REF="${REF:-stable}"' "$source_dir/scripts/quick-install.sh"
 
